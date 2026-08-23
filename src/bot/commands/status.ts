@@ -23,7 +23,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
   const hours = Math.floor(uptimeSeconds / 3600);
   const minutes = Math.floor((uptimeSeconds % 3600) / 60);
 
-  const modelLabel = DEFAULT_LLM_PROVIDER === "openai" ? "gpt-4o" : "gemini-2.0-flash";
+  const modelLabel = DEFAULT_LLM_PROVIDER === "openai" ? "gpt-4o" : "gemini-2.5-flash";
   const briefingTime = getCurrentBriefingTime();
 
   const statusText = `📊 **FRIDAY Telemetry & Status**

@@ -1,7 +1,9 @@
 import { Cron } from "croner";
+import { InlineKeyboard } from "grammy";
 import { getSupabaseClient } from "../db/supabase.js";
 import { env } from "../config/env.js";
 import { parseTimeString, getEndOfDayISO } from "../utils/time.js";
+import { runFactCompaction } from "./compaction.service.js";
 import type { Bot } from "grammy";
 
 /** Fetches a brief live briefing snapshot via Tavily for morning context. */
@@ -41,6 +43,14 @@ export async function initScheduler(telegramBot: Bot): Promise<void> {
 
   // Poll for due reminders every minute
   new Cron("* * * * *", () => void checkDueReminders());
+
+  // ADR-0006: Daily fact compaction at 3 AM (user timezone)
+  new Cron("0 3 * * *", { timezone: env().USER_TIMEZONE }, () => {
+    console.log("[scheduler] Starting daily fact compaction...");
+    void runFactCompaction().catch((err) =>
+      console.error("[scheduler] Fact compaction failed:", err)
+    );
+  });
 
   // Fetch saved briefing time from database or fallback to env
   const savedTime = await fetchSavedBriefingTime();
@@ -149,10 +159,16 @@ async function checkDueReminders(): Promise<void> {
 
   for (const reminder of dueReminders ?? []) {
     try {
+      // Build inline action buttons for immediate snooze/cancel
+      const keyboard = new InlineKeyboard()
+        .text("⏰ +15m", `snooze:${reminder.id}:15`)
+        .text("⏰ +1h", `snooze:${reminder.id}:60`)
+        .text("❌ Cancel", `cancel:${reminder.id}`);
+
       await bot.api.sendMessage(
         reminder.telegram_chat_id,
         `⏰ **Reminder**\n\n${reminder.message}`,
-        { parse_mode: "Markdown" }
+        { parse_mode: "Markdown", reply_markup: keyboard }
       );
 
       if (reminder.is_recurring && reminder.cron_expression) {

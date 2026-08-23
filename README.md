@@ -1,9 +1,9 @@
 # 🤖 FRIDAY — Personalized Telegram AI Assistant
 
-[![CI](https://github.com/your-username/friday/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/friday/actions/workflows/ci.yml)
+[![CI](https://github.com/NexusInno1/Friday/actions/workflows/ci.yml/badge.svg)](https://github.com/NexusInno1/Friday/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-**FRIDAY** is an intelligent, personalized Telegram-based AI assistant inspired by Marvel's FRIDAY. Built with **TypeScript / Node.js**, powered by **Google Gemini 2.0 Flash** via the **Vercel AI SDK**, backed by **Supabase (pgvector)**, and equipped with **Tavily AI Web Search** and automated **minute-by-minute reminders & daily morning briefings**.
+**FRIDAY** is an intelligent, personalized Telegram-based AI assistant inspired by Marvel's FRIDAY. Built with **TypeScript / Node.js**, powered by **Google Gemini 2.5 Flash** via the **Vercel AI SDK**, backed by **Supabase (pgvector)**, and equipped with **Tavily AI Web Search** and automated **minute-by-minute reminders & daily morning briefings**.
 
 ---
 
@@ -24,7 +24,7 @@
 - **Runtime**: Node.js 22+ (TypeScript ESM, strict mode)
 - **Telegram Framework**: [grammY](https://grammy.dev)
 - **AI Engine**: [Vercel AI SDK](https://sdk.vercel.ai) (`ai`, `@ai-sdk/google`, `@ai-sdk/openai`)
-- **Primary LLM**: Google Gemini 2.0 Flash (with OpenAI fallback support)
+- **Primary LLM**: Google Gemini 2.5 Flash (with OpenAI fallback support)
 - **Vector Database**: [Supabase](https://supabase.com) (PostgreSQL + `pgvector` + HNSW indexing)
 - **Web Search**: [Tavily AI Search API](https://tavily.com)
 - **Scheduler**: [Croner](https://github.com/Hexagon/croner)
@@ -44,7 +44,7 @@
 
 ### 2. Clone & Install
 ```bash
-git clone https://github.com/your-username/friday.git
+git clone https://github.com/NexusInno1/Friday.git
 cd friday
 npm install
 ```

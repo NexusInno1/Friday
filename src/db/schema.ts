@@ -103,6 +103,8 @@ export interface Database {
           tags: string[];
           embedding: number[] | null;
           importance: number;
+          is_active: boolean;
+          superseded_by: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -113,6 +115,8 @@ export interface Database {
           tags?: string[];
           embedding?: number[] | null;
           importance?: number;
+          is_active?: boolean;
+          superseded_by?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -123,6 +127,8 @@ export interface Database {
           tags?: string[];
           embedding?: number[] | null;
           importance?: number;
+          is_active?: boolean;
+          superseded_by?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -211,6 +217,8 @@ export interface Database {
           tags: string[];
           embedding: number[] | null;
           importance: number;
+          is_active: boolean;
+          superseded_by: string | null;
           created_at: string;
           updated_at: string;
           similarity: number;

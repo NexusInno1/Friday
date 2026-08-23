@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS memories (
   tags        TEXT[] NOT NULL DEFAULT '{}',
   embedding   vector(768),  -- Gemini text-embedding-004 dimensions
   importance  SMALLINT NOT NULL DEFAULT 3 CHECK (importance BETWEEN 1 AND 5),
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  superseded_by UUID REFERENCES memories(id) ON DELETE SET NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -65,6 +67,10 @@ CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories(user_id);
 -- HNSW index for fast approximate nearest-neighbor search
 CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories
   USING hnsw (embedding vector_cosine_ops);
+
+-- Partial index for active-only memory queries (ADR-0004: superseding)
+CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(user_id)
+  WHERE is_active = TRUE;
 
 -- Semantic similarity search function
 CREATE OR REPLACE FUNCTION match_memories(
@@ -91,6 +97,7 @@ LANGUAGE SQL STABLE AS $$
   FROM memories m
   WHERE
     m.user_id = p_user_id
+    AND m.is_active = TRUE
     AND 1 - (m.embedding <=> query_embedding) > match_threshold
   ORDER BY m.embedding <=> query_embedding
   LIMIT match_count;

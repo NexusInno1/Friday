@@ -50,8 +50,18 @@ export function formatMemoryLines(
 }
 
 /**
+ * Similarity threshold above which a new memory is considered a
+ * direct update/contradiction of an existing one (ADR-0004).
+ */
+const SUPERSEDE_THRESHOLD = 0.85;
+
+/**
  * Stores a memory fact about the user in Supabase.
  * Generates an embedding for future semantic search.
+ *
+ * ADR-0004: Before inserting, checks for semantically similar active memories.
+ * If a near-duplicate is found (similarity > SUPERSEDE_THRESHOLD), the old
+ * memory is marked inactive and linked via `superseded_by` to the new one.
  */
 export async function storeMemory(
   content: string,
@@ -69,6 +79,31 @@ export async function storeMemory(
     console.warn("[memory] Failed to generate embedding, storing without vector:", err);
   }
 
+  // ADR-0004: Detect and supersede conflicting memories
+  const supersededIds: string[] = [];
+  if (embedding) {
+    try {
+      const { data: conflicts } = await db.rpc("match_memories", {
+        query_embedding: embedding,
+        match_threshold: SUPERSEDE_THRESHOLD,
+        match_count: 3,
+        p_user_id: userId,
+      });
+
+      if (conflicts && conflicts.length > 0) {
+        for (const conflict of conflicts) {
+          supersededIds.push(conflict.id);
+        }
+        console.log(
+          `[memory] Superseding ${supersededIds.length} conflicting memor${supersededIds.length === 1 ? "y" : "ies"}`
+        );
+      }
+    } catch (err) {
+      console.warn("[memory] Conflict detection failed, inserting without supersede:", err);
+    }
+  }
+
+  // Insert the new memory
   const { data, error } = await db
     .from("memories")
     .insert({ user_id: userId, content, tags, embedding, importance })
@@ -76,6 +111,19 @@ export async function storeMemory(
     .single();
 
   if (error) throw new Error(`Failed to store memory: ${error.message}`);
+
+  // Mark superseded memories as inactive and link to the new one
+  if (supersededIds.length > 0 && data) {
+    try {
+      await db
+        .from("memories")
+        .update({ is_active: false, superseded_by: data.id })
+        .in("id", supersededIds);
+    } catch (err) {
+      console.warn("[memory] Failed to mark superseded memories:", err);
+    }
+  }
+
   return data;
 }
 
@@ -111,6 +159,7 @@ export async function searchMemories(
     .from("memories")
     .select()
     .eq("user_id", userId)
+    .eq("is_active", true)
     .ilike("content", `%${query}%`)
     .order("importance", { ascending: false })
     .order("created_at", { ascending: false })
@@ -129,6 +178,7 @@ export async function listMemories(limit = 20): Promise<Memory[]> {
     .from("memories")
     .select()
     .eq("user_id", env().TELEGRAM_ALLOWED_USER_ID)
+    .eq("is_active", true)
     .order("importance", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(limit);
