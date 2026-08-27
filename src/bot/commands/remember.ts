@@ -14,9 +14,13 @@ export async function handleRemember(ctx: Context): Promise<void> {
 
   try {
     await storeMemory(text.trim(), ["user_note"], 3);
-    await ctx.reply(`✓ **Saved to long-term memory:**\n"${text.trim()}"`, {
-      parse_mode: "Markdown",
-    });
+    await ctx
+      .reply(`✓ **Saved to long-term memory:**\n"${text.trim()}"`, {
+        parse_mode: "Markdown",
+      })
+      .catch(async () => {
+        await ctx.reply(`✓ Saved to long-term memory:\n"${text.trim()}"`);
+      });
   } catch (error) {
     await ctx.reply(
       `⚠️ Could not store memory: ${error instanceof Error ? error.message : "Unknown error"}`

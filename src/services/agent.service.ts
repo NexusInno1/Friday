@@ -23,7 +23,7 @@ export function getModel() {
   }
 
   const google = createGoogleGenerativeAI({ apiKey: GEMINI_API_KEY });
-  return google("gemini-2.5-flash");
+  return google("gemini-2.0-flash");
 }
 
 /**
@@ -58,7 +58,10 @@ export async function runAgent(
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({
         role: m.role as "user" | "assistant",
-        content: m.content,
+        content:
+          m.role === "user"
+            ? `<user_message>\n${m.content}\n</user_message>`
+            : m.content,
       }));
 
   // 6. Instantiate tools scoped to this chatId
@@ -74,13 +77,16 @@ export async function runAgent(
     const result = await generateText({
       model: getModel(),
       system: systemPrompt,
-      messages: [...messages, { role: "user", content: userMessage }],
+      messages: [
+        ...messages,
+        { role: "user", content: `<user_message>\n${userMessage}\n</user_message>` },
+      ],
       tools: scopedTools,
       maxSteps: MAX_STEPS,
       abortSignal: abortController.signal,
     });
 
-    const responseText = result.text;
+    const responseText = result.text.trim() || "✓ Done, Boss.";
 
     // 8. Save assistant response
     await saveMessage(conversationId, "assistant", responseText, {

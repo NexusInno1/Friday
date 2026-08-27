@@ -35,10 +35,16 @@ export async function handleSearch(ctx: Context): Promise<void> {
       response += "No direct results found.";
     }
 
-    await ctx.reply(response, {
-      parse_mode: "Markdown",
-      link_preview_options: { is_disabled: true },
-    });
+    await ctx
+      .reply(response, {
+        parse_mode: "Markdown",
+        link_preview_options: { is_disabled: true },
+      })
+      .catch(async () => {
+        await ctx.reply(response, {
+          link_preview_options: { is_disabled: true },
+        });
+      });
   } catch (error) {
     await ctx.reply(
       `⚠️ Search failed: ${error instanceof Error ? error.message : "Unknown error"}`

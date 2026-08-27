@@ -20,13 +20,24 @@ export async function handleBriefing(ctx: Context): Promise<void> {
 
   try {
     const result = await updateBriefingTime(rawTime);
-    await ctx.reply(
-      `✓ **Daily Briefing Updated!**\n\nI will now deliver your morning briefing every day at \`${result.time}\` (${USER_TIMEZONE}), Boss.`,
-      { parse_mode: "Markdown" }
-    );
+    await ctx
+      .reply(
+        `✓ **Daily Briefing Updated!**\n\nI will now deliver your morning briefing every day at \`${result.time}\` (${USER_TIMEZONE}), Boss.`,
+        { parse_mode: "Markdown" }
+      )
+      .catch(async () => {
+        await ctx.reply(
+          `✓ Daily Briefing Updated!\n\nI will now deliver your morning briefing every day at ${result.time} (${USER_TIMEZONE}), Boss.`
+        );
+      });
   } catch (error) {
     await ctx.reply(
-      `⚠️ **Invalid Time Format**: ${error instanceof Error ? error.message : "Please use HH:MM (e.g. /briefing 08:30 or /briefing 8:30am)"}`
-    );
+      `⚠️ **Invalid Time Format**: ${error instanceof Error ? error.message : "Please use HH:MM (e.g. /briefing 08:30 or /briefing 8:30am)"}`,
+      { parse_mode: "Markdown" }
+    ).catch(async () => {
+      await ctx.reply(
+        `⚠️ Invalid Time Format: ${error instanceof Error ? error.message : "Please use HH:MM (e.g. /briefing 08:30 or /briefing 8:30am)"}`
+      );
+    });
   }
 }

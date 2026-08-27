@@ -7,6 +7,9 @@
  * 4. Hard character limit (fallback)
  */
 export function chunkMessage(text: string, maxLength = 4000): string[] {
+  if (!text || text.length === 0) {
+    return [];
+  }
   if (text.length <= maxLength) {
     return [text];
   }

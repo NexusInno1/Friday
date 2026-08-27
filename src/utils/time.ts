@@ -7,8 +7,8 @@
 export function parseTimeString(input: string): string {
   const trimmed = input.trim();
 
-  // 1. Try 12-hour AM/PM format (e.g., "8:30am", "8:30 AM", "7pm", "7 PM")
-  const ampmRegex = /^(\d{1,2})(?::([0-5]\d))?\s*(am|pm)$/i;
+  // 1. Try 12-hour AM/PM format (e.g., "8:30am", "8:30 AM", "8.30am", "7pm", "7 PM")
+  const ampmRegex = /^(\d{1,2})(?:[:.]([0-5]\d))?\s*(am|pm)$/i;
   const ampmMatch = trimmed.match(ampmRegex);
 
   if (ampmMatch) {
@@ -31,8 +31,8 @@ export function parseTimeString(input: string): string {
     return `${hh}:${mm}`;
   }
 
-  // 2. Try 24-hour format (e.g., "08:30", "8:30", "19:00", "23:59")
-  const hour24Regex = /^([01]?\d|2[0-3]):([0-5]\d)$/;
+  // 2. Try 24-hour format (e.g., "08:30", "8:30", "08.30", "19:00", "23:59")
+  const hour24Regex = /^([01]?\d|2[0-3])[:.]([0-5]\d)$/;
   const hour24Match = trimmed.match(hour24Regex);
 
   if (hour24Match) {

@@ -94,13 +94,20 @@ export async function createReminder(params: {
   const db = getSupabaseClient();
   const userId = params.userId ?? env().TELEGRAM_ALLOWED_USER_ID;
 
+  const date = new Date(params.triggerAt);
+  if (isNaN(date.getTime())) {
+    throw new Error(
+      `Invalid trigger date/time format: "${params.triggerAt}". Expected a valid ISO 8601 datetime string (e.g. 2026-08-27T18:00:00+05:30).`
+    );
+  }
+
   const { data, error } = await db
     .from("reminders")
     .insert({
       user_id: userId,
       telegram_chat_id: params.chatId,
       message: params.message,
-      trigger_at: params.triggerAt,
+      trigger_at: date.toISOString(),
       is_recurring: params.isRecurring ?? false,
       cron_expression: params.cronExpression ?? null,
       is_completed: false,

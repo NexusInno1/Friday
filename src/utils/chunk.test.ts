@@ -2,6 +2,10 @@ import { describe, it, expect } from "vitest";
 import { chunkMessage } from "./chunk.js";
 
 describe("chunkMessage", () => {
+  it("returns empty array for empty string", () => {
+    expect(chunkMessage("")).toEqual([]);
+  });
+
   it("returns single chunk if text is within limit", () => {
     const text = "Short message within 4000 characters.";
     const chunks = chunkMessage(text, 4000);

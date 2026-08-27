@@ -29,13 +29,20 @@ export async function errorHandler(err: BotError<Context>): Promise<void> {
 
   // Notify user if it's the whitelisted owner
   if (userId === env().TELEGRAM_ALLOWED_USER_ID) {
+    const errDetail = error instanceof Error ? error.message : String(error);
     try {
       await ctx.reply(
-        "⚠️ **Apologies, Boss.** Encountered an internal glitch processing that request. Diagnostics have been logged.",
+        `⚠️ **Apologies, Boss.** Encountered an internal glitch processing that request:\n\`${errDetail}\`\n\nDiagnostics have been logged.`,
         { parse_mode: "Markdown" }
       );
     } catch {
-      // Ignore delivery errors in error handler
+      try {
+        await ctx.reply(
+          `⚠️ Apologies, Boss. Encountered an internal glitch processing that request: ${errDetail}\nDiagnostics have been logged.`
+        );
+      } catch {
+        // Ignore delivery errors in error handler
+      }
     }
   }
 }

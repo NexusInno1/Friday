@@ -2,7 +2,7 @@ import { getSupabaseClient } from "../db/supabase.js";
 import { env } from "../config/env.js";
 import type { Memory } from "../db/schema.js";
 
-const EMBEDDING_MODEL = "gemini-embedding-001";
+const EMBEDDING_MODEL = "text-embedding-004";
 
 /**
  * Generates a text embedding using Google's Gemini embedding model.
@@ -24,7 +24,10 @@ async function generateEmbedding(text: string): Promise<number[]> {
   );
 
   if (!response.ok) {
-    throw new Error(`Embedding API error: ${response.status} ${response.statusText}`);
+    const errorDetails = await response.text().catch(() => "");
+    throw new Error(
+      `Embedding API error (${response.status} ${response.statusText}): ${errorDetails}`
+    );
   }
 
   const data = (await response.json()) as {
@@ -147,11 +150,13 @@ export async function searchMemories(
       p_user_id: userId,
     });
 
-    if (!error && data && data.length > 0) {
+    if (error) {
+      console.warn("[memory] match_memories RPC error, falling back to keyword search:", error.message);
+    } else if (data && data.length > 0) {
       return data as Memory[];
     }
-  } catch {
-    // Fall through to keyword search
+  } catch (err) {
+    console.warn("[memory] Semantic search failed, falling back to keyword search:", err);
   }
 
   // Keyword fallback
@@ -209,7 +214,8 @@ export async function buildMemoryContext(
 
     const lines = formatMemoryLines(memories);
     return `## Relevant memories about the user:\n${lines}`;
-  } catch {
+  } catch (err) {
+    console.warn("[memory] buildMemoryContext failed:", err);
     return null; // Memory failure should never break the main response
   }
 }

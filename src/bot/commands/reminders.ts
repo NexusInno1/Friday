@@ -32,13 +32,20 @@ export async function handleReminders(ctx: Context): Promise<void> {
 
       const recurringBadge = reminder.is_recurring ? " 🔁" : "";
 
-      await ctx.reply(
-        `• **${reminder.message}**${recurringBadge}\n  📅 Scheduled for: \`${timeStr}\``,
-        {
-          parse_mode: "Markdown",
-          reply_markup: keyboard,
-        }
-      );
+      await ctx
+        .reply(
+          `• **${reminder.message}**${recurringBadge}\n  📅 Scheduled for: \`${timeStr}\``,
+          {
+            parse_mode: "Markdown",
+            reply_markup: keyboard,
+          }
+        )
+        .catch(async () => {
+          await ctx.reply(
+            `• ${reminder.message}${recurringBadge}\n  Scheduled for: ${timeStr}`,
+            { reply_markup: keyboard }
+          );
+        });
     }
   } catch (error) {
     await ctx.reply(

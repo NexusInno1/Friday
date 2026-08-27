@@ -34,6 +34,7 @@ export const webSearchTool = tool({
         Authorization: `Bearer ${TAVILY_API_KEY}`,
       },
       body: JSON.stringify({
+        api_key: TAVILY_API_KEY,
         query,
         max_results: max_results ?? 5,
         search_depth: "basic",
@@ -43,20 +44,23 @@ export const webSearchTool = tool({
     });
 
     if (!response.ok) {
-      throw new Error(`Tavily search failed: ${response.status} ${response.statusText}`);
+      const errBody = await response.text().catch(() => "");
+      throw new Error(
+        `Tavily search failed (${response.status} ${response.statusText}): ${errBody}`
+      );
     }
 
     const data = (await response.json()) as {
       answer?: string;
-      results: Array<{ title: string; url: string; content: string }>;
+      results?: Array<{ title?: string; url?: string; content?: string }>;
     };
 
     return {
       answer: data.answer ?? null,
-      results: data.results.map((r) => ({
-        title: r.title,
-        url: r.url,
-        snippet: r.content.slice(0, 300),
+      results: (data.results ?? []).map((r) => ({
+        title: r.title ?? "Untitled",
+        url: r.url ?? "",
+        snippet: r.content ? r.content.slice(0, 300) : "",
       })),
     };
   },

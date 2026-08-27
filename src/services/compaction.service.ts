@@ -90,10 +90,17 @@ export async function runFactCompaction(): Promise<{
       if (msgError || !oldMessages || oldMessages.length === 0) continue;
 
       // Extract facts via LLM
-      const facts = await extractFacts(oldMessages);
+      const extraction = await extractFacts(oldMessages);
+
+      if (!extraction.success) {
+        console.error(
+          `[compaction] Skipping message deletion for conversation ${conversationId} due to extraction failure.`
+        );
+        continue;
+      }
 
       // Store each extracted fact as a memory
-      for (const fact of facts) {
+      for (const fact of extraction.facts) {
         try {
           await storeMemory(
             fact.content,
@@ -138,12 +145,25 @@ export async function runFactCompaction(): Promise<{
 }
 
 /**
+ * Strips markdown code fences from LLM JSON responses.
+ */
+export function cleanJsonText(rawText: string): string {
+  let cleaned = rawText.trim();
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  }
+  return cleaned;
+}
+
+/**
  * Uses the LLM to extract durable facts from a batch of messages.
- * Falls back to an empty array on any failure.
  */
 async function extractFacts(
   messages: Array<{ role: string; content: string; created_at: string }>
-): Promise<Array<{ content: string; importance: number; tags: string[] }>> {
+): Promise<{
+  success: boolean;
+  facts: Array<{ content: string; importance: number; tags: string[] }>;
+}> {
   try {
     const conversationText = messages
       .map((m) => `[${m.role}] ${m.content}`)
@@ -156,18 +176,23 @@ async function extractFacts(
       maxSteps: 1,
     });
 
-    const parsed = JSON.parse(result.text);
-    if (!Array.isArray(parsed)) return [];
+    const cleaned = cleanJsonText(result.text);
+    const parsed = JSON.parse(cleaned);
+    if (!Array.isArray(parsed)) {
+      return { success: true, facts: [] };
+    }
 
-    return parsed.filter(
+    const facts = parsed.filter(
       (f: unknown): f is { content: string; importance: number; tags: string[] } =>
         typeof f === "object" &&
         f !== null &&
         "content" in f &&
         typeof (f as { content: unknown }).content === "string"
     );
+
+    return { success: true, facts };
   } catch (err) {
-    console.warn("[compaction] Fact extraction failed, skipping batch:", err);
-    return [];
+    console.error("[compaction] Fact extraction failed:", err);
+    return { success: false, facts: [] };
   }
 }

@@ -18,7 +18,7 @@ export async function getOrCreateConversation(chatId: number): Promise<string> {
     .gte("updated_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
     .order("updated_at", { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (existing) return existing.id;
 

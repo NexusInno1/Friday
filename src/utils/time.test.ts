@@ -26,6 +26,13 @@ describe("parseTimeString", () => {
     expect(parseTimeString("7 PM")).toBe("19:00");
     expect(parseTimeString("7am")).toBe("07:00");
     expect(parseTimeString("11:59 pm")).toBe("23:59");
+    expect(parseTimeString("8.30am")).toBe("08:30");
+    expect(parseTimeString("8.30 AM")).toBe("08:30");
+  });
+
+  it("parses 24-hour formats with dot separator correctly", () => {
+    expect(parseTimeString("08.30")).toBe("08:30");
+    expect(parseTimeString("19.45")).toBe("19:45");
   });
 
   it("throws clear error on invalid time formats", () => {

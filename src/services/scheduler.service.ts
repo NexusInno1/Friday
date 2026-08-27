@@ -15,6 +15,7 @@ async function fetchBriefingSnapshot(userTimezone: string): Promise<string | nul
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${TAVILY_API_KEY}` },
       body: JSON.stringify({
+        api_key: TAVILY_API_KEY,
         query: `top tech and world news headlines for ${dayStr}`,
         max_results: 3,
         search_depth: "basic",
@@ -23,10 +24,13 @@ async function fetchBriefingSnapshot(userTimezone: string): Promise<string | nul
       }),
     });
     if (!response.ok) return null;
-    const data = (await response.json()) as { answer?: string; results: Array<{ title: string; url: string }> };
+    const data = (await response.json()) as { answer?: string; results?: Array<{ title?: string; url?: string }> };
     if (data.answer) return data.answer;
-    if (data.results.length > 0) {
-      return data.results.map((r) => `• ${r.title}`).join("\n");
+    if (data.results && data.results.length > 0) {
+      return data.results
+        .filter((r) => r.title)
+        .map((r) => `• ${r.title}`)
+        .join("\n");
     }
     return null;
   } catch {
@@ -71,7 +75,7 @@ async function fetchSavedBriefingTime(): Promise<string> {
       .from("user_profiles")
       .select("briefing_time")
       .eq("id", TELEGRAM_ALLOWED_USER_ID)
-      .single();
+      .maybeSingle();
 
     if (profile?.briefing_time) {
       return parseTimeString(profile.briefing_time);
@@ -165,19 +169,34 @@ async function checkDueReminders(): Promise<void> {
         .text("⏰ +1h", `snooze:${reminder.id}:60`)
         .text("❌ Cancel", `cancel:${reminder.id}`);
 
-      await bot.api.sendMessage(
-        reminder.telegram_chat_id,
-        `⏰ **Reminder**\n\n${reminder.message}`,
-        { parse_mode: "Markdown", reply_markup: keyboard }
-      );
+      await bot.api
+        .sendMessage(
+          reminder.telegram_chat_id,
+          `⏰ **Reminder**\n\n${reminder.message}`,
+          { parse_mode: "Markdown", reply_markup: keyboard }
+        )
+        .catch(async () => {
+          await bot!.api.sendMessage(
+            reminder.telegram_chat_id,
+            `⏰ Reminder\n\n${reminder.message}`,
+            { reply_markup: keyboard }
+          );
+        });
 
       if (reminder.is_recurring && reminder.cron_expression) {
-        // Calculate next trigger for recurring reminders
-        const nextRun = new Cron(reminder.cron_expression).nextRun();
+        // Calculate next trigger for recurring reminders in configured timezone
+        const nextRun = new Cron(reminder.cron_expression, {
+          timezone: env().USER_TIMEZONE,
+        }).nextRun();
         if (nextRun) {
           await db
             .from("reminders")
             .update({ trigger_at: nextRun.toISOString() })
+            .eq("id", reminder.id);
+        } else {
+          await db
+            .from("reminders")
+            .update({ is_completed: true })
             .eq("id", reminder.id);
         }
       } else {
@@ -202,7 +221,7 @@ async function sendDailyBriefing(): Promise<void> {
     // Calculate end of day in the configured USER_TIMEZONE
     const endOfDayIso = getEndOfDayISO(USER_TIMEZONE);
 
-    const { data: todayReminders } = await db
+    const { data: todayReminders, error: remError } = await db
       .from("reminders")
       .select()
       .eq("user_id", TELEGRAM_ALLOWED_USER_ID)
@@ -210,6 +229,10 @@ async function sendDailyBriefing(): Promise<void> {
       .eq("is_cancelled", false)
       .lte("trigger_at", endOfDayIso)
       .order("trigger_at", { ascending: true });
+
+    if (remError) {
+      console.warn("[scheduler] Error fetching today reminders:", remError.message);
+    }
 
     const now = new Date().toLocaleString("en-IN", {
       timeZone: USER_TIMEZONE,
@@ -244,9 +267,13 @@ async function sendDailyBriefing(): Promise<void> {
 
     briefing += `\nOnline and ready, ${USER_NAME}. What's on the agenda?`;
 
-    await bot.api.sendMessage(TELEGRAM_ALLOWED_USER_ID, briefing, {
-      parse_mode: "Markdown",
-    });
+    await bot.api
+      .sendMessage(TELEGRAM_ALLOWED_USER_ID, briefing, {
+        parse_mode: "Markdown",
+      })
+      .catch(async () => {
+        await bot!.api.sendMessage(TELEGRAM_ALLOWED_USER_ID, briefing);
+      });
   } catch (err) {
     console.error("[scheduler] Failed to send daily briefing:", err);
   }

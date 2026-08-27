@@ -35,7 +35,10 @@ const EnvSchema = z.object({
     .transform((val) => (val === "" ? undefined : val))
     .pipe(z.string().url().optional()), // only validate as URL if actually set
   WEBHOOK_PORT: z.string().transform(Number).default("3000"),
-  HEALTH_PORT: z.string().transform(Number).default("8080"),
+  HEALTH_PORT: z
+    .string()
+    .default(process.env.PORT ?? "8080")
+    .transform(Number),
 
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });

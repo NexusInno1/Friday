@@ -35,7 +35,7 @@ export function createBot(): Bot {
   bot.command("clear", handleClear);
 
   // Callback query handlers for interactive reminder buttons
-  bot.callbackQuery(/^snooze:([a-f0-9-]+):(\d+)$/, async (ctx) => {
+  bot.callbackQuery(/^snooze:([a-f0-9-]+):(\d+)$/i, async (ctx) => {
     const reminderId = ctx.match[1];
     const minutes = Number(ctx.match[2]);
 
@@ -45,26 +45,43 @@ export function createBot(): Bot {
       await ctx.answerCallbackQuery({
         text: `Snoozed for ${minutes} minutes!`,
       });
-      await ctx.editMessageText(
-        `⏰ **Snoozed**: ${reminder.message}\nNew time: \`${new Date(newTriggerAt).toLocaleTimeString()}\``,
-        { parse_mode: "Markdown" }
-      );
+      const timeStr = new Date(newTriggerAt).toLocaleTimeString("en-IN", {
+        timeZone: env().USER_TIMEZONE,
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      await ctx
+        .editMessageText(
+          `⏰ **Snoozed**: ${reminder.message}\nNew time: \`${timeStr}\``,
+          { parse_mode: "Markdown" }
+        )
+        .catch(async () => {
+          await ctx.editMessageText(
+            `⏰ Snoozed: ${reminder.message}\nNew time: ${timeStr}`
+          );
+        });
     } catch (err) {
+      console.error("[bot:snooze] Error snoozing reminder:", err);
       await ctx.answerCallbackQuery({ text: "Failed to snooze." });
     }
   });
 
-  bot.callbackQuery(/^cancel:([a-f0-9-]+)$/, async (ctx) => {
+  bot.callbackQuery(/^cancel:([a-f0-9-]+)$/i, async (ctx) => {
     const reminderId = ctx.match[1];
 
     try {
       await cancelReminder(reminderId);
 
       await ctx.answerCallbackQuery({ text: "Reminder cancelled." });
-      await ctx.editMessageText("❌ **Reminder cancelled.**", {
-        parse_mode: "Markdown",
-      });
-    } catch {
+      await ctx
+        .editMessageText("❌ **Reminder cancelled.**", {
+          parse_mode: "Markdown",
+        })
+        .catch(async () => {
+          await ctx.editMessageText("❌ Reminder cancelled.");
+        });
+    } catch (err) {
+      console.error("[bot:cancel] Error cancelling reminder:", err);
       await ctx.answerCallbackQuery({ text: "Failed to cancel." });
     }
   });
@@ -75,7 +92,7 @@ export function createBot(): Bot {
     const chatId = ctx.chat.id;
 
     // Send continuous typing indicator while agent processes
-    await ctx.replyWithChatAction("typing");
+    await ctx.replyWithChatAction("typing").catch(() => {});
     const interval = setInterval(() => {
       void ctx.replyWithChatAction("typing").catch(() => {});
     }, 4000);
@@ -86,18 +103,32 @@ export function createBot(): Bot {
 
       const chunks = chunkMessage(response, 4000);
       for (const chunk of chunks) {
-        await ctx.reply(chunk, {
-          parse_mode: "Markdown",
-          link_preview_options: { is_disabled: true },
-        });
+        try {
+          await ctx.reply(chunk, {
+            parse_mode: "Markdown",
+            link_preview_options: { is_disabled: true },
+          });
+        } catch {
+          // Markdown parse failure fallback
+          await ctx.reply(chunk, {
+            link_preview_options: { is_disabled: true },
+          });
+        }
       }
     } catch (error) {
       clearInterval(interval);
       console.error("[bot:agent] Failed to generate response:", error);
-      await ctx.reply(
-        "⚠️ **Encountered an issue processing that.** Please try again or ask with more specifics, Boss.",
-        { parse_mode: "Markdown" }
-      );
+      const errMsg = error instanceof Error ? error.message : "Unknown error";
+      await ctx
+        .reply(
+          `⚠️ **Encountered an issue processing that:** ${errMsg}\n\nPlease try again or ask with more specifics, Boss.`,
+          { parse_mode: "Markdown" }
+        )
+        .catch(async () => {
+          await ctx.reply(
+            `⚠️ Encountered an issue processing that: ${errMsg}\n\nPlease try again or ask with more specifics, Boss.`
+          );
+        });
     }
   });
 

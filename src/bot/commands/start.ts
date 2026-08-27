@@ -25,5 +25,9 @@ Here is what I can do for you:
 
 Or simply type any message or question, Boss!`;
 
-  await ctx.reply(welcomeMessage, { parse_mode: "Markdown" });
+  await ctx
+    .reply(welcomeMessage, { parse_mode: "Markdown" })
+    .catch(async () => {
+      await ctx.reply(welcomeMessage);
+    });
 }

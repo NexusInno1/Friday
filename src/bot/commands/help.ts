@@ -22,5 +22,9 @@ Simply send any natural language message:
 ### 🔒 Security
 FRIDAY is locked to your Telegram User ID. Unauthorized messages are dropped silently.`;
 
-  await ctx.reply(helpText, { parse_mode: "Markdown" });
+  await ctx
+    .reply(helpText, { parse_mode: "Markdown" })
+    .catch(async () => {
+      await ctx.reply(helpText);
+    });
 }

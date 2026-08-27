@@ -23,7 +23,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
   const hours = Math.floor(uptimeSeconds / 3600);
   const minutes = Math.floor((uptimeSeconds % 3600) / 60);
 
-  const modelLabel = DEFAULT_LLM_PROVIDER === "openai" ? "gpt-4o" : "gemini-2.5-flash";
+  const modelLabel = DEFAULT_LLM_PROVIDER === "openai" ? "gpt-4o" : "gemini-2.0-flash";
   const briefingTime = getCurrentBriefingTime();
 
   const statusText = `📊 **FRIDAY Telemetry & Status**
@@ -39,5 +39,9 @@ export async function handleStatus(ctx: Context): Promise<void> {
 • **Active Reminders**: \`${reminderCount ?? 0}\`
 • **Node.js**: \`${process.version}\``;
 
-  await ctx.reply(statusText, { parse_mode: "Markdown" });
+  await ctx
+    .reply(statusText, { parse_mode: "Markdown" })
+    .catch(async () => {
+      await ctx.reply(statusText);
+    });
 }
