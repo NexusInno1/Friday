@@ -1,23 +1,14 @@
 import type { Context } from "grammy";
 import { env } from "../../config/env.js";
-import { getSupabaseClient } from "../../db/supabase.js";
+import { getDataStore } from "../../db/datastore-provider.js";
 import { getCurrentBriefingTime } from "../../services/scheduler.service.js";
 
 export async function handleStatus(ctx: Context): Promise<void> {
   const { DEFAULT_LLM_PROVIDER, USER_TIMEZONE, USER_NAME, NODE_ENV } = env();
-  const db = getSupabaseClient();
+  const store = getDataStore();
 
-  // Fetch memory count
-  const { count: memoryCount } = await db
-    .from("memories")
-    .select("*", { count: "exact", head: true });
-
-  // Fetch active reminder count
-  const { count: reminderCount } = await db
-    .from("reminders")
-    .select("*", { count: "exact", head: true })
-    .eq("is_completed", false)
-    .eq("is_cancelled", false);
+  const memoryCount = await store.getMemoryCount();
+  const reminderCount = await store.getActiveReminderCount();
 
   const uptimeSeconds = Math.floor(process.uptime());
   const hours = Math.floor(uptimeSeconds / 3600);
@@ -35,8 +26,8 @@ export async function handleStatus(ctx: Context): Promise<void> {
 • **Timezone**: \`${USER_TIMEZONE}\`
 • **Daily Briefing**: \`${briefingTime}\` (${USER_TIMEZONE})
 • **Uptime**: \`${hours}h ${minutes}m\`
-• **Stored Memories**: \`${memoryCount ?? 0}\`
-• **Active Reminders**: \`${reminderCount ?? 0}\`
+• **Stored Memories**: \`${memoryCount}\`
+• **Active Reminders**: \`${reminderCount}\`
 • **Node.js**: \`${process.version}\``;
 
   await ctx

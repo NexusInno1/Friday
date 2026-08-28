@@ -1,10 +1,10 @@
 import type { BotError, Context } from "grammy";
-import { getSupabaseClient } from "../../db/supabase.js";
+import { getDataStore } from "../../db/datastore-provider.js";
 import { env } from "../../config/env.js";
 
 /**
  * Global error handler for grammY bot.
- * Catches unhandled errors, logs them to console & Supabase activity_logs,
+ * Catches unhandled errors, logs them to console & DataStore activity_logs,
  * and sends a polite recovery message to the user in FRIDAY persona.
  */
 export async function errorHandler(err: BotError<Context>): Promise<void> {
@@ -14,17 +14,17 @@ export async function errorHandler(err: BotError<Context>): Promise<void> {
 
   console.error(`[bot:error] Error while handling update ${ctx.update.update_id}:`, error);
 
-  // Log error to Supabase
+  // Log error via DataStore
   try {
-    const db = getSupabaseClient();
-    await db.from("activity_logs").insert({
-      user_id: userId ?? null,
-      event_type: "bot_error",
-      error: error instanceof Error ? error.stack ?? error.message : String(error),
-      payload: { update_id: ctx.update.update_id },
-    });
+    const store = getDataStore();
+    await store.logActivity(
+      userId ?? null,
+      "bot_error",
+      { update_id: ctx.update.update_id },
+      error instanceof Error ? error.stack ?? error.message : String(error)
+    );
   } catch (dbErr) {
-    console.error("[bot:error] Failed to log error to Supabase:", dbErr);
+    console.error("[bot:error] Failed to log error to DataStore:", dbErr);
   }
 
   // Notify user if it's the whitelisted owner

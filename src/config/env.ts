@@ -70,8 +70,32 @@ export function validateEnv(): Env {
   return _env;
 }
 
+export function setEnv(mockEnv: Env): void {
+  _env = mockEnv;
+}
+
 export function env(): Env {
   if (!_env) {
+    if (process.env.NODE_ENV === "test" || process.env.VITEST) {
+      _env = {
+        TELEGRAM_BOT_TOKEN: "mock_telegram_token",
+        TELEGRAM_ALLOWED_USER_ID: 123456789,
+        DEFAULT_LLM_PROVIDER: "gemini",
+        GEMINI_API_KEY: "mock_gemini_key",
+        OPENAI_API_KEY: undefined,
+        TAVILY_API_KEY: "mock_tavily_key",
+        SUPABASE_URL: "https://mock.supabase.co",
+        SUPABASE_SERVICE_ROLE_KEY: "mock_service_key",
+        USER_TIMEZONE: "Asia/Kolkata",
+        USER_NAME: "Boss",
+        BRIEFING_TIME: "07:00",
+        WEBHOOK_URL: undefined,
+        WEBHOOK_PORT: 3000,
+        HEALTH_PORT: 8080,
+        NODE_ENV: "test",
+      };
+      return _env;
+    }
     throw new Error("env() called before validateEnv(). Call validateEnv() first in index.ts.");
   }
   return _env;

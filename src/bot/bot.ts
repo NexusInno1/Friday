@@ -10,18 +10,26 @@ import { handleSearch } from "./commands/search.js";
 import { handleStatus } from "./commands/status.js";
 import { handleClear } from "./commands/clear.js";
 import { handleBriefing } from "./commands/briefing.js";
-import { runAgent } from "../services/agent.service.js";
-import { snoozeReminder, cancelReminder } from "../services/reminder.service.js";
+import { getAssistantEngine, AssistantEngine } from "../services/agent.service.js";
+import { getScheduler, ProactiveScheduler } from "../services/scheduler.service.js";
 import { chunkMessage } from "../utils/chunk.js";
 
-export function createBot(): Bot {
-  const { TELEGRAM_BOT_TOKEN } = env();
-  const bot = new Bot(TELEGRAM_BOT_TOKEN);
+export interface BotFactoryOptions {
+  token?: string;
+  assistantEngine?: AssistantEngine;
+  scheduler?: ProactiveScheduler;
+}
+
+export function createBot(options: BotFactoryOptions = {}): Bot {
+  const token = options.token ?? env().TELEGRAM_BOT_TOKEN;
+  const bot = new Bot(token);
+  const engine = options.assistantEngine ?? getAssistantEngine();
+  const scheduler = options.scheduler ?? getScheduler();
 
   // Global error boundary
   bot.catch(errorHandler);
 
-  // Security whitelist middleware
+  // Security whitelist middleware (ADR-0001)
   bot.use(authMiddleware);
 
   // Direct slash commands
@@ -40,7 +48,7 @@ export function createBot(): Bot {
     const minutes = Number(ctx.match[2]);
 
     try {
-      const { reminder, newTriggerAt } = await snoozeReminder(reminderId, minutes);
+      const { reminder, newTriggerAt } = await scheduler.snooze(reminderId, minutes);
 
       await ctx.answerCallbackQuery({
         text: `Snoozed for ${minutes} minutes!`,
@@ -70,7 +78,7 @@ export function createBot(): Bot {
     const reminderId = ctx.match[1];
 
     try {
-      await cancelReminder(reminderId);
+      await scheduler.cancel(reminderId);
 
       await ctx.answerCallbackQuery({ text: "Reminder cancelled." });
       await ctx
@@ -98,7 +106,7 @@ export function createBot(): Bot {
     }, 4000);
 
     try {
-      const response = await runAgent(chatId, text);
+      const response = await engine.reply(chatId, text);
       clearInterval(interval);
 
       const chunks = chunkMessage(response, 4000);

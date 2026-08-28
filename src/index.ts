@@ -13,13 +13,17 @@ async function main() {
   // 2. Initialize Telegram Bot
   const bot = createBot();
 
-  // 3. Graceful Shutdown Handlers (registered BEFORE starting the server/bot)
+  // 4. Initialize background scheduler (reminders & daily briefing)
+  const scheduler = await initScheduler(bot);
+
+  // Graceful shutdown handler
   let isShuttingDown = false;
   const handleShutdown = async (signal: string) => {
     if (isShuttingDown) return;
     isShuttingDown = true;
     console.log(`\n🛑 Received ${signal}. Shutting down FRIDAY gracefully...`);
     try {
+      scheduler.stop();
       if (!envConfig.WEBHOOK_URL) {
         await bot.stop();
       }
@@ -33,9 +37,6 @@ async function main() {
 
   process.on("SIGINT", () => void handleShutdown("SIGINT"));
   process.on("SIGTERM", () => void handleShutdown("SIGTERM"));
-
-  // 4. Initialize background scheduler (reminders & daily briefing)
-  await initScheduler(bot);
 
   // 5. Start health check server
   const healthApp = startHealthServer();

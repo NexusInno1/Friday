@@ -1,16 +1,20 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { storeMemory, searchMemories } from "../services/memory.service.js";
-import { updateBriefingTime } from "../services/scheduler.service.js";
-import {
-  createReminder,
-  listActiveReminders,
-  cancelReminder,
-  snoozeReminder,
-} from "../services/reminder.service.js";
+import type { DataStore } from "../db/datastore.js";
+import { getDataStore } from "../db/datastore-provider.js";
 import { env } from "../config/env.js";
+import {
+  rememberAction,
+  recallMemoriesAction,
+  webSearchAction,
+  createReminderAction,
+  listRemindersAction,
+  cancelReminderAction,
+  snoozeReminderAction,
+  updateBriefingTimeAction,
+} from "../actions/actions.js";
 
-// ─── Web Search ─────────────────────────────────────────────────────────────
+// ─── Web Search Tool ─────────────────────────────────────────────────────────
 
 export const webSearchTool = tool({
   description:
@@ -25,44 +29,7 @@ export const webSearchTool = tool({
       .describe("Maximum number of results to return"),
   }),
   execute: async ({ query, max_results }) => {
-    const { TAVILY_API_KEY } = env();
-
-    const response = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${TAVILY_API_KEY}`,
-      },
-      body: JSON.stringify({
-        api_key: TAVILY_API_KEY,
-        query,
-        max_results: max_results ?? 5,
-        search_depth: "basic",
-        include_answer: true,
-        include_raw_content: false,
-      }),
-    });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => "");
-      throw new Error(
-        `Tavily search failed (${response.status} ${response.statusText}): ${errBody}`
-      );
-    }
-
-    const data = (await response.json()) as {
-      answer?: string;
-      results?: Array<{ title?: string; url?: string; content?: string }>;
-    };
-
-    return {
-      answer: data.answer ?? null,
-      results: (data.results ?? []).map((r) => ({
-        title: r.title ?? "Untitled",
-        url: r.url ?? "",
-        snippet: r.content ? r.content.slice(0, 300) : "",
-      })),
-    };
+    return webSearchAction(query, max_results ?? 5);
   },
 });
 
@@ -90,7 +57,7 @@ export const storeMemoryTool = tool({
       .describe("Importance level 1-5, where 5 is critical and 1 is minor"),
   }),
   execute: async ({ content, tags, importance }) => {
-    await storeMemory(content, tags, importance);
+    await rememberAction(content, tags, importance);
     return { success: true, stored: content };
   },
 });
@@ -108,7 +75,7 @@ export const recallMemoryTool = tool({
       .describe("Maximum number of memories to retrieve"),
   }),
   execute: async ({ query, limit }) => {
-    const memories = await searchMemories(query, limit);
+    const memories = await recallMemoriesAction(query, limit);
     if (memories.length === 0) {
       return { found: false, memories: [] };
     }
@@ -136,7 +103,7 @@ export const setBriefingTimeTool = tool({
       .describe("The time in 24-hour HH:MM or 12-hour format (e.g. '08:30', '8:30am', '7pm')"),
   }),
   execute: async ({ time }) => {
-    const result = await updateBriefingTime(time);
+    const result = await updateBriefingTimeAction(time);
     return {
       success: true,
       new_briefing_time: result.time,
@@ -151,11 +118,13 @@ export const setBriefingTimeTool = tool({
 export interface ToolContext {
   chatId: number;
   userId?: number;
+  store?: DataStore;
 }
 
 export function createTools(context?: ToolContext) {
   const targetChatId = context?.chatId ?? env().TELEGRAM_ALLOWED_USER_ID;
   const targetUserId = context?.userId ?? env().TELEGRAM_ALLOWED_USER_ID;
+  const store = context?.store ?? getDataStore();
 
   const createReminderScopedTool = tool({
     description:
@@ -179,14 +148,17 @@ export function createTools(context?: ToolContext) {
         .describe("Cron expression for recurring reminders (e.g. '0 9 * * 1' for every Monday at 9am)"),
     }),
     execute: async ({ message, trigger_at, is_recurring, cron_expression }) => {
-      const data = await createReminder({
-        userId: targetUserId,
-        chatId: targetChatId,
-        message,
-        triggerAt: trigger_at,
-        isRecurring: is_recurring,
-        cronExpression: cron_expression,
-      });
+      const data = await createReminderAction(
+        {
+          userId: targetUserId,
+          chatId: targetChatId,
+          message,
+          triggerAt: trigger_at,
+          isRecurring: is_recurring,
+          cronExpression: cron_expression,
+        },
+        store
+      );
 
       return {
         success: true,
@@ -201,7 +173,7 @@ export function createTools(context?: ToolContext) {
     description: "List all active (pending) reminders for the user.",
     parameters: z.object({}),
     execute: async () => {
-      const reminders = await listActiveReminders(targetUserId);
+      const reminders = await listRemindersAction(targetUserId, 20, store);
       return { reminders };
     },
   });
@@ -209,10 +181,10 @@ export function createTools(context?: ToolContext) {
   const cancelReminderScopedTool = tool({
     description: "Cancel a specific reminder by its ID.",
     parameters: z.object({
-      reminder_id: z.string().uuid().describe("The UUID of the reminder to cancel"),
+      reminder_id: z.string().describe("The UUID or ID of the reminder to cancel"),
     }),
     execute: async ({ reminder_id }) => {
-      const res = await cancelReminder(reminder_id, targetUserId);
+      const res = await cancelReminderAction(reminder_id, targetUserId, store);
       return { success: res.success, cancelled_id: res.cancelledId };
     },
   });
@@ -220,11 +192,11 @@ export function createTools(context?: ToolContext) {
   const snoozeReminderScopedTool = tool({
     description: "Snooze a reminder by delaying it by a specified number of minutes.",
     parameters: z.object({
-      reminder_id: z.string().uuid().describe("The UUID of the reminder to snooze"),
+      reminder_id: z.string().describe("The UUID or ID of the reminder to snooze"),
       minutes: z.number().positive().describe("Number of minutes to delay the reminder"),
     }),
     execute: async ({ reminder_id, minutes }) => {
-      const res = await snoozeReminder(reminder_id, minutes, targetUserId);
+      const res = await snoozeReminderAction(reminder_id, minutes, targetUserId, store);
       return { success: true, new_trigger_at: res.newTriggerAt };
     },
   });
@@ -240,4 +212,3 @@ export function createTools(context?: ToolContext) {
     set_briefing_time: setBriefingTimeTool,
   };
 }
-
