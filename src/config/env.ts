@@ -34,6 +34,11 @@ const EnvSchema = z.object({
     .optional()
     .transform((val) => (val === "" ? undefined : val))
     .pipe(z.string().url().optional()), // only validate as URL if actually set
+  TELEGRAM_WEBHOOK_SECRET: z
+    .string()
+    .optional()
+    .transform((val) => (val === "" ? undefined : val))
+    .pipe(z.string().min(16, "TELEGRAM_WEBHOOK_SECRET must be at least 16 characters").optional()),
   WEBHOOK_PORT: z.string().transform(Number).default("3000"),
   HEALTH_PORT: z
     .string()
@@ -67,6 +72,17 @@ export function validateEnv(): Env {
   }
 
   _env = result.data;
+
+  // A public webhook without Telegram's secret header is forgeable. Fail closed
+  // instead of silently running the owner-only bot behind an unauthenticated URL.
+  if (_env.WEBHOOK_URL && !_env.TELEGRAM_WEBHOOK_SECRET) {
+    console.error(
+      "\n❌ TELEGRAM_WEBHOOK_SECRET is required when WEBHOOK_URL is configured.\n" +
+        "Set a random secret (at least 16 characters) or remove WEBHOOK_URL to use polling.\n"
+    );
+    process.exit(1);
+  }
+
   return _env;
 }
 
@@ -90,6 +106,7 @@ export function env(): Env {
         USER_NAME: "Boss",
         BRIEFING_TIME: "07:00",
         WEBHOOK_URL: undefined,
+        TELEGRAM_WEBHOOK_SECRET: undefined,
         WEBHOOK_PORT: 3000,
         HEALTH_PORT: 8080,
         NODE_ENV: "test",

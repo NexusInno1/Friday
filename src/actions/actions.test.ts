@@ -60,6 +60,54 @@ describe("Core Actions", () => {
       const activeList = await store.listActiveReminders(100);
       expect(activeList.length).toBe(0);
     });
+
+    it("accepts valid cron expression for recurring reminder", async () => {
+      const reminder = await createReminderAction(
+        {
+          userId: 100,
+          chatId: 100,
+          message: "Standup meeting",
+          triggerAt: "2026-08-28T09:00:00.000Z",
+          isRecurring: true,
+          cronExpression: "0 9 * * 1-5",
+        },
+        store
+      );
+
+      expect(reminder.is_recurring).toBe(true);
+      expect(reminder.cron_expression).toBe("0 9 * * 1-5");
+    });
+
+    it("rejects invalid cron expression on creation", async () => {
+      await expect(
+        createReminderAction(
+          {
+            userId: 100,
+            chatId: 100,
+            message: "Bad cron test",
+            triggerAt: "2026-08-28T09:00:00.000Z",
+            isRecurring: true,
+            cronExpression: "invalid-cron-expr",
+          },
+          store
+        )
+      ).rejects.toThrow(/Invalid cron expression/);
+    });
+
+    it("rejects missing cron expression when isRecurring is true", async () => {
+      await expect(
+        createReminderAction(
+          {
+            userId: 100,
+            chatId: 100,
+            message: "Missing cron test",
+            triggerAt: "2026-08-28T09:00:00.000Z",
+            isRecurring: true,
+          },
+          store
+        )
+      ).rejects.toThrow(/Recurring reminders require a valid cron expression/);
+    });
   });
 
   describe("updateBriefingTimeAction", () => {

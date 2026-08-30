@@ -46,10 +46,17 @@ async function main() {
     console.log(`🌐 Configuring Webhook mode with URL: ${envConfig.WEBHOOK_URL}`);
     const webhookPath = "/telegram-webhook";
 
-    healthApp.use(webhookPath, webhookCallback(bot, "express"));
+    const webhookSecret = envConfig.TELEGRAM_WEBHOOK_SECRET;
+    healthApp.use(
+      webhookPath,
+      webhookCallback(bot, "express", {
+        secretToken: webhookSecret,
+      })
+    );
 
     await bot.api.setWebhook(`${envConfig.WEBHOOK_URL}${webhookPath}`, {
       allowed_updates: ["message", "callback_query"],
+      secret_token: webhookSecret,
     });
 
     console.log(`✅ Webhook set to: ${envConfig.WEBHOOK_URL}${webhookPath}`);

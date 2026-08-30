@@ -127,10 +127,10 @@ export class SupabaseDataStore implements DataStore {
     conversationId: string,
     cutoffDateIso: string,
     limit = 50
-  ): Promise<Array<{ role: MessageRole; content: string; created_at: string }>> {
+  ): Promise<Array<{ id: string; role: MessageRole; content: string; created_at: string }>> {
     const { data, error } = await this.db
       .from("messages")
-      .select("role, content, created_at")
+      .select("id, role, content, created_at")
       .eq("conversation_id", conversationId)
       .lt("created_at", cutoffDateIso)
       .order("created_at", { ascending: true })
@@ -154,6 +154,20 @@ export class SupabaseDataStore implements DataStore {
 
     if (error) {
       console.error("[supabase-store] Failed to delete messages:", error.message);
+      return 0;
+    }
+    return count ?? 0;
+  }
+
+  async deleteMessagesByIds(messageIds: string[]): Promise<number> {
+    if (messageIds.length === 0) return 0;
+    const { count, error } = await this.db
+      .from("messages")
+      .delete({ count: "exact" })
+      .in("id", messageIds);
+
+    if (error) {
+      console.error("[supabase-store] Failed to delete messages by IDs:", error.message);
       return 0;
     }
     return count ?? 0;
