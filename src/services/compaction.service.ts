@@ -1,5 +1,5 @@
 import { getDataStore } from "../db/datastore-provider.js";
-import { storeMemory } from "./memory.service.js";
+import { rememberAction } from "../actions/actions.js";
 import { getModel } from "./agent.service.js";
 import { generateText } from "ai";
 import type { DataStore } from "../db/datastore.js";
@@ -69,23 +69,35 @@ export async function runFactCompaction(
         continue;
       }
 
+      let allFactsStored = true;
       for (const fact of extraction.facts) {
         try {
-          await storeMemory(
+          await rememberAction(
             fact.content,
             [...(fact.tags ?? []), "compacted"],
-            fact.importance ?? 3
+            fact.importance ?? 3,
+            store
           );
           totalFacts++;
         } catch (err) {
+          allFactsStored = false;
           console.warn("[compaction] Failed to store extracted fact:", err);
         }
       }
 
-      const deletedCount = await store.deleteConversationMessagesBefore(
-        conversationId,
-        cutoffDate
-      );
+      // Never delete source messages when a fact write failed. The batch will be
+      // retried while the source remains available (later deduplication/provenance
+      // can make successful partial writes idempotent).
+      if (!allFactsStored) {
+        console.error(
+          `[compaction] Retaining messages for conversation ${conversationId} because one or more facts could not be stored.`
+        );
+        continue;
+      }
+
+      // Safe batch deletion: Delete ONLY the exact message IDs that were extracted and processed
+      const extractedMessageIds = oldMessages.map((m) => m.id);
+      const deletedCount = await store.deleteMessagesByIds(extractedMessageIds);
       totalDeleted += deletedCount;
       conversationsProcessed++;
     } catch (err) {

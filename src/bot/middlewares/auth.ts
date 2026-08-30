@@ -18,5 +18,14 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
     return;
   }
 
+  // Chat-scope guard: FRIDAY is an executive 1:1 assistant.
+  // Reject groups, supergroups, and channels to prevent accidental memory/data disclosure.
+  if (ctx.chat && ctx.chat.type !== "private") {
+    console.warn(
+      `[auth] Blocked request from non-private chat type: ${ctx.chat.type} (chat ID: ${ctx.chat.id})`
+    );
+    return;
+  }
+
   await next();
 }

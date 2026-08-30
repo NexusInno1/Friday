@@ -3,6 +3,7 @@ import type { DataStore } from "../db/datastore.js";
 import { getDataStore } from "../db/datastore-provider.js";
 import type { Memory, Reminder } from "../db/schema.js";
 import { parseTimeString } from "../utils/time.js";
+import { Cron } from "croner";
 
 const EMBEDDING_MODEL = "text-embedding-004";
 const SUPERSEDE_THRESHOLD = 0.85;
@@ -195,13 +196,26 @@ export async function createReminderAction(
     );
   }
 
+  if (params.isRecurring || params.cronExpression) {
+    if (!params.cronExpression || !params.cronExpression.trim()) {
+      throw new Error("Recurring reminders require a valid cron expression.");
+    }
+    try {
+      new Cron(params.cronExpression.trim());
+    } catch {
+      throw new Error(
+        `Invalid cron expression: "${params.cronExpression}". Expected a valid 5-part cron format (e.g. "0 9 * * 1-5").`
+      );
+    }
+  }
+
   return store.createReminder({
     userId,
     chatId: params.chatId,
     message: params.message.trim(),
     triggerAt: date.toISOString(),
     isRecurring: params.isRecurring ?? false,
-    cronExpression: params.cronExpression ?? null,
+    cronExpression: params.cronExpression?.trim() ?? null,
   });
 }
 
