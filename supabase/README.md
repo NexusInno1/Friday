@@ -21,8 +21,11 @@ FRIDAY uses **Supabase** (PostgreSQL with `pgvector`) to store:
 
 1. In your Supabase project dashboard, open the **SQL Editor** from the left navigation.
 2. Click **"New query"**.
-3. Copy the entire contents of [`supabase/schema.sql`](./schema.sql) and paste it into the editor.
-4. Click **"Run"** (or press `Ctrl+Enter`).
+3. For a **new project**, apply [`schema.sql`](./schema.sql), which is the complete corrected schema. Alternatively, apply the numbered migration files in filename order, including the existing `001_add_memory_superseding.sql` before `002_fix_match_memories_rpc.sql`.
+4. For an **existing FRIDAY database**, do not re-run the initial schema. Apply [`migrations/001_add_memory_superseding.sql`](./migrations/001_add_memory_superseding.sql) if it has not already been applied, then [`migrations/002_fix_match_memories_rpc.sql`](./migrations/002_fix_match_memories_rpc.sql) to repair the vector RPC.
+5. Click **"Run"** (or press `Ctrl+Enter`) after each migration.
+
+`schema.sql` remains the complete reference schema for new provisioning. The numbered migrations are the authoritative path for an existing deployment. Note that `001_initial_schema.sql` is a duplicate initial-schema helper and must not be run against an existing database.
 5. You should see `Success. No rows returned`.
 
 This will:

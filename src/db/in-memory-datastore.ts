@@ -143,7 +143,7 @@ export class InMemoryDataStore implements DataStore {
     conversationId: string,
     cutoffDateIso: string,
     limit = 50
-  ): Promise<Array<{ role: MessageRole; content: string; created_at: string }>> {
+  ): Promise<Array<{ id: string; role: MessageRole; content: string; created_at: string }>> {
     const cutoffTime = new Date(cutoffDateIso).getTime();
     return Array.from(this.messages.values())
       .filter(
@@ -153,7 +153,7 @@ export class InMemoryDataStore implements DataStore {
       )
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
       .slice(0, limit)
-      .map((m) => ({ role: m.role, content: m.content, created_at: m.created_at }));
+      .map((m) => ({ id: m.id, role: m.role, content: m.content, created_at: m.created_at }));
   }
 
   async deleteConversationMessagesBefore(
@@ -168,6 +168,16 @@ export class InMemoryDataStore implements DataStore {
         new Date(msg.created_at).getTime() < cutoffTime
       ) {
         this.messages.delete(id);
+        count++;
+      }
+    }
+    return count;
+  }
+
+  async deleteMessagesByIds(messageIds: string[]): Promise<number> {
+    let count = 0;
+    for (const id of messageIds) {
+      if (this.messages.delete(id)) {
         count++;
       }
     }

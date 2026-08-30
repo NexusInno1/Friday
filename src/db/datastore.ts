@@ -34,11 +34,12 @@ export interface DataStore {
     conversationId: string,
     cutoffDateIso: string,
     limit?: number
-  ): Promise<Array<{ role: MessageRole; content: string; created_at: string }>>;
+  ): Promise<Array<{ id: string; role: MessageRole; content: string; created_at: string }>>;
   deleteConversationMessagesBefore(
     conversationId: string,
     cutoffDateIso: string
   ): Promise<number>;
+  deleteMessagesByIds(messageIds: string[]): Promise<number>;
 
   // ─── Long-Term Memories ────────────────────────────────
   storeMemory(

@@ -35,3 +35,33 @@ describe("cleanJsonText", () => {
     expect(JSON.parse(cleaned)).toEqual([]);
   });
 });
+
+describe("DataStore message deletion safety", () => {
+  it("deletes only specified message IDs and retains the rest", async () => {
+    const { InMemoryDataStore } = await import("../db/in-memory-datastore.js");
+    const store = new InMemoryDataStore();
+    const convId = await store.getOrCreateConversation(12345);
+
+    // Save 5 messages
+    await store.saveMessage(convId, "user", "Message 1");
+    await store.saveMessage(convId, "assistant", "Message 2");
+    await store.saveMessage(convId, "user", "Message 3");
+    await store.saveMessage(convId, "assistant", "Message 4");
+    await store.saveMessage(convId, "user", "Message 5");
+
+    const allMessages = Array.from(store.messages.values());
+    expect(allMessages.length).toBe(5);
+
+    // Delete only the first 2 message IDs
+    const idsToDelete = [allMessages[0].id, allMessages[1].id];
+    const deletedCount = await store.deleteMessagesByIds(idsToDelete);
+
+    expect(deletedCount).toBe(2);
+    expect(store.messages.size).toBe(3);
+    expect(store.messages.has(allMessages[0].id)).toBe(false);
+    expect(store.messages.has(allMessages[1].id)).toBe(false);
+    expect(store.messages.has(allMessages[2].id)).toBe(true);
+    expect(store.messages.has(allMessages[3].id)).toBe(true);
+    expect(store.messages.has(allMessages[4].id)).toBe(true);
+  });
+});
