@@ -73,6 +73,8 @@ CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(user_id)
   WHERE is_active = TRUE;
 
 -- Semantic similarity search function
+DROP FUNCTION IF EXISTS match_memories(vector, double precision, integer, bigint);
+
 CREATE OR REPLACE FUNCTION match_memories(
   query_embedding vector(768),
   match_threshold FLOAT,
@@ -126,6 +128,8 @@ CREATE TABLE IF NOT EXISTS reminders (
   is_recurring     BOOLEAN NOT NULL DEFAULT FALSE,
   is_completed     BOOLEAN NOT NULL DEFAULT FALSE,
   is_cancelled     BOOLEAN NOT NULL DEFAULT FALSE,
+  lease_until      TIMESTAMPTZ,
+  delivery_attempts INT NOT NULL DEFAULT 0,
   telegram_chat_id BIGINT NOT NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
