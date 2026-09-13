@@ -110,12 +110,21 @@ async function fetchBriefingSnapshot(userTimezone: string): Promise<string | nul
       answer?: string;
       results?: Array<{ title?: string; url?: string }>;
     };
-    if (data.answer) return data.answer;
+    if (data.answer) {
+      const cleaned = data.answer
+        .replace(/^Here('s| is) a summary of [^:\n]+:\s*/i, "")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => (line.startsWith("•") || line.startsWith("-") ? line : `• ${line}`))
+        .join("\n\n");
+      if (cleaned) return cleaned;
+    }
     if (data.results && data.results.length > 0) {
       return data.results
         .filter((r) => r.title)
-        .map((r) => `• ${r.title}`)
-        .join("\n");
+        .map((r) => `• ${r.title?.trim()}`)
+        .join("\n\n");
     }
     return null;
   } catch {
