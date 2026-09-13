@@ -13,7 +13,7 @@ const DEFAULT_MAX_STEPS = 10;
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 export function getModel(): LanguageModel {
-  const { DEFAULT_LLM_PROVIDER, GEMINI_API_KEY, OPENAI_API_KEY } = env();
+  const { DEFAULT_LLM_PROVIDER, GEMINI_API_KEY, OPENAI_API_KEY, GEMINI_MODEL } = env();
 
   if (DEFAULT_LLM_PROVIDER === "openai" && OPENAI_API_KEY) {
     const openai = createOpenAI({ apiKey: OPENAI_API_KEY });
@@ -21,7 +21,7 @@ export function getModel(): LanguageModel {
   }
 
   const google = createGoogleGenerativeAI({ apiKey: GEMINI_API_KEY });
-  return google("gemini-2.0-flash");
+  return google(GEMINI_MODEL ?? "gemini-2.5-flash");
 }
 
 export interface AssistantEngineOptions {

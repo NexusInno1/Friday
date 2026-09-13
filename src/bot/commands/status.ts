@@ -4,7 +4,7 @@ import { getDataStore } from "../../db/datastore-provider.js";
 import { getCurrentBriefingTime } from "../../services/scheduler.service.js";
 
 export async function handleStatus(ctx: Context): Promise<void> {
-  const { DEFAULT_LLM_PROVIDER, USER_TIMEZONE, USER_NAME, NODE_ENV } = env();
+  const { DEFAULT_LLM_PROVIDER, GEMINI_MODEL, USER_TIMEZONE, USER_NAME, NODE_ENV } = env();
   const store = getDataStore();
 
   const memoryCount = await store.getMemoryCount();
@@ -14,7 +14,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
   const hours = Math.floor(uptimeSeconds / 3600);
   const minutes = Math.floor((uptimeSeconds % 3600) / 60);
 
-  const modelLabel = DEFAULT_LLM_PROVIDER === "openai" ? "gpt-4o" : "gemini-2.0-flash";
+  const modelLabel = DEFAULT_LLM_PROVIDER === "openai" ? "gpt-4o" : (GEMINI_MODEL ?? "gemini-2.5-flash");
   const briefingTime = getCurrentBriefingTime();
 
   const statusText = `📊 **FRIDAY Telemetry & Status**
