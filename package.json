@@ -1,7 +1,7 @@
 {
   "name": "friday-ai-assistant",
   "version": "1.0.0",
-  "description": "FRIDAY - Personalized Telegram AI Assistant powered by Gemini 2.0, Supabase, and Tavily Search",
+  "description": "FRIDAY - Personalized Telegram AI Assistant powered by Gemini 2.5 Flash, Supabase, and Tavily Search",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
