@@ -15,6 +15,14 @@ describe("EnvSchema - TELEGRAM_WEBHOOK_SECRET and WEBHOOK_URL rules", () => {
     BRIEFING_TIME: "07:00",
   };
 
+  it("defaults Gemini to the current supported Flash model", () => {
+    const result = EnvSchema.safeParse(baseValidEnv);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.GEMINI_MODEL).toBe(DEFAULT_GEMINI_MODEL);
+    }
+  });
+
   it("passes when WEBHOOK_URL is not configured (Long Polling mode)", () => {
     const result = EnvSchema.safeParse(baseValidEnv);
     expect(result.success).toBe(true);

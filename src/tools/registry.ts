@@ -19,7 +19,8 @@ import {
 export const webSearchTool = tool({
   description:
     "Search the web for real-time information, news, current events, facts, or research. " +
-    "Use this when the user asks about something that may have changed recently or requires live data.",
+    "Synthesize findings into an executive briefing with bold titles and structured bullet points. " +
+    "Never dump raw snippets, unformatted lines, or conversational filler.",
   parameters: z.object({
     query: z.string().describe("The search query to look up"),
     max_results: z
