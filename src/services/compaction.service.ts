@@ -29,8 +29,16 @@ Rules:
 Respond with ONLY a JSON array, no markdown fencing:
 [{"content": "fact statement", "importance": 3, "tags": ["category"]}]`;
 
+export type FactExtractor = (
+  messages: Array<{ id: string; role: string; content: string; created_at: string }>
+) => Promise<{
+  success: boolean;
+  facts: Array<{ content: string; importance: number; tags: string[] }>;
+}>;
+
 export async function runFactCompaction(
-  store: DataStore = getDataStore()
+  store: DataStore = getDataStore(),
+  extractor: FactExtractor = extractFacts
 ): Promise<{
   conversationsProcessed: number;
   factsExtracted: number;
@@ -60,7 +68,7 @@ export async function runFactCompaction(
 
       if (!oldMessages || oldMessages.length === 0) continue;
 
-      const extraction = await extractFacts(oldMessages);
+      const extraction = await extractor(oldMessages);
 
       if (!extraction.success) {
         console.error(
@@ -126,7 +134,7 @@ export function cleanJsonText(rawText: string): string {
 }
 
 async function extractFacts(
-  messages: Array<{ role: string; content: string; created_at: string }>
+  messages: Array<{ id: string; role: string; content: string; created_at: string }>
 ): Promise<{
   success: boolean;
   facts: Array<{ content: string; importance: number; tags: string[] }>;

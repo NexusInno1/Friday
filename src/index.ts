@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { validateEnv } from "./config/env.js";
 import { createBot } from "./bot/bot.js";
 import { initScheduler } from "./services/scheduler.service.js";
@@ -47,6 +48,22 @@ async function main() {
     const webhookPath = "/telegram-webhook";
 
     const webhookSecret = envConfig.TELEGRAM_WEBHOOK_SECRET;
+
+    healthApp.use(webhookPath, (req, res, next) => {
+      const secretHeader = req.header("x-telegram-bot-api-secret-token");
+      if (!secretHeader || !webhookSecret) {
+        res.status(401).send("Unauthorized");
+        return;
+      }
+      const headerBuf = Buffer.from(secretHeader);
+      const secretBuf = Buffer.from(webhookSecret);
+      if (headerBuf.length !== secretBuf.length || !crypto.timingSafeEqual(headerBuf, secretBuf)) {
+        res.status(401).send("Unauthorized");
+        return;
+      }
+      next();
+    });
+
     healthApp.use(
       webhookPath,
       webhookCallback(bot, "express", {

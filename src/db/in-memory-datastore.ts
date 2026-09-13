@@ -305,6 +305,8 @@ export class InMemoryDataStore implements DataStore {
       cron_expression: params.cronExpression ?? null,
       is_completed: false,
       is_cancelled: false,
+      lease_until: null,
+      delivery_attempts: 0,
       created_at: now,
     };
     this.reminders.set(id, reminder);
@@ -323,6 +325,31 @@ export class InMemoryDataStore implements DataStore {
     return Array.from(this.reminders.values()).filter(
       (r) => !r.is_completed && !r.is_cancelled && new Date(r.trigger_at).getTime() <= nowTime
     );
+  }
+
+  async claimDueReminders(nowIso: string, leaseDurationMs: number): Promise<Reminder[]> {
+    const nowTime = new Date(nowIso).getTime();
+    const leaseUntilIso = new Date(nowTime + leaseDurationMs).toISOString();
+    const claimed: Reminder[] = [];
+
+    for (const reminder of this.reminders.values()) {
+      if (reminder.is_completed || reminder.is_cancelled) continue;
+      const triggerTime = new Date(reminder.trigger_at).getTime();
+      if (triggerTime > nowTime) continue;
+
+      if (reminder.lease_until) {
+        const leaseTime = new Date(reminder.lease_until).getTime();
+        if (leaseTime > nowTime) {
+          continue;
+        }
+      }
+
+      reminder.lease_until = leaseUntilIso;
+      reminder.delivery_attempts = (reminder.delivery_attempts ?? 0) + 1;
+      claimed.push({ ...reminder });
+    }
+
+    return claimed;
   }
 
   async getReminder(id: string, userId: number): Promise<Reminder | null> {

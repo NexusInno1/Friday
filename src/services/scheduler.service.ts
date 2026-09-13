@@ -125,6 +125,8 @@ async function fetchBriefingSnapshot(userTimezone: string): Promise<string | nul
 
 // ─── Deep Module: ProactiveScheduler ─────────────────────────────────────────
 
+export const MAX_DELIVERY_ATTEMPTS = 5;
+
 export interface ProactiveSchedulerOptions {
   store?: DataStore;
   dispatcher?: NotificationDispatcher;
@@ -177,10 +179,10 @@ export class ProactiveScheduler {
   async checkDueReminders(): Promise<number> {
     if (!this.dispatcher) return 0;
     const now = new Date().toISOString();
-    const due = await this.store.getDueReminders(now);
+    const claimed = await this.store.claimDueReminders(now, 120_000);
 
     let processed = 0;
-    for (const reminder of due) {
+    for (const reminder of claimed) {
       try {
         await this.dispatcher.sendMessage(
           reminder.telegram_chat_id,
@@ -202,16 +204,41 @@ export class ProactiveScheduler {
           if (nextRun) {
             await this.store.updateReminder(reminder.id, {
               trigger_at: nextRun.toISOString(),
+              lease_until: null,
             });
           } else {
-            await this.store.updateReminder(reminder.id, { is_completed: true });
+            await this.store.updateReminder(reminder.id, {
+              is_completed: true,
+              lease_until: null,
+            });
           }
         } else {
-          await this.store.updateReminder(reminder.id, { is_completed: true });
+          await this.store.updateReminder(reminder.id, {
+            is_completed: true,
+            lease_until: null,
+          });
         }
         processed++;
       } catch (err) {
         console.error("[scheduler] Failed to deliver reminder:", reminder.id, err);
+        const attempts = reminder.delivery_attempts ?? 1;
+        if (attempts >= MAX_DELIVERY_ATTEMPTS) {
+          console.warn(
+            `[scheduler] Reminder ${reminder.id} exceeded maximum delivery attempts (${MAX_DELIVERY_ATTEMPTS}). Marking as cancelled.`
+          );
+          try {
+            await this.store.updateReminder(reminder.id, {
+              is_cancelled: true,
+              lease_until: null,
+            });
+          } catch (cancelErr) {
+            console.error(
+              `[scheduler] Failed to cancel permanently failing reminder ${reminder.id}:`,
+              cancelErr
+            );
+          }
+        }
+        // Otherwise: keep lease_until intact so it will retry after lease expires
       }
     }
     return processed;
