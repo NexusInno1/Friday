@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { EnvSchema, env } from "./env.js";
+import { DEFAULT_GEMINI_MODEL, EnvSchema, env } from "./env.js";
 
 describe("EnvSchema - TELEGRAM_WEBHOOK_SECRET and WEBHOOK_URL rules", () => {
   const baseValidEnv = {
@@ -21,6 +21,14 @@ describe("EnvSchema - TELEGRAM_WEBHOOK_SECRET and WEBHOOK_URL rules", () => {
     if (result.success) {
       expect(result.data.WEBHOOK_URL).toBeUndefined();
       expect(result.data.TELEGRAM_WEBHOOK_SECRET).toBeUndefined();
+    }
+  });
+
+  it("defaults Gemini to the current supported Flash model", () => {
+    const result = EnvSchema.safeParse(baseValidEnv);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.GEMINI_MODEL).toBe(DEFAULT_GEMINI_MODEL);
     }
   });
 

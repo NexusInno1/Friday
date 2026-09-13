@@ -1,6 +1,8 @@
 import "dotenv/config";
 import { z } from "zod";
 
+export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+
 export const EnvSchema = z.object({
   // Telegram
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
@@ -12,7 +14,7 @@ export const EnvSchema = z.object({
   // AI Provider
   DEFAULT_LLM_PROVIDER: z.enum(["gemini", "openai"]).default("gemini"),
   GEMINI_API_KEY: z.string().min(1, "GEMINI_API_KEY is required"),
-  GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_MODEL: z.string().trim().min(1).default(DEFAULT_GEMINI_MODEL),
   OPENAI_API_KEY: z.string().optional(),
 
   // Tavily
@@ -105,7 +107,7 @@ export function env(): Env {
         TELEGRAM_ALLOWED_USER_ID: 123456789,
         DEFAULT_LLM_PROVIDER: "gemini",
         GEMINI_API_KEY: "mock_gemini_key",
-        GEMINI_MODEL: "gemini-2.5-flash",
+        GEMINI_MODEL: DEFAULT_GEMINI_MODEL,
         OPENAI_API_KEY: undefined,
         TAVILY_API_KEY: "mock_tavily_key",
         SUPABASE_URL: "https://mock.supabase.co",

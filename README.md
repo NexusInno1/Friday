@@ -3,7 +3,7 @@
 [![CI](https://github.com/NexusInno1/Friday/actions/workflows/ci.yml/badge.svg)](https://github.com/NexusInno1/Friday/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-**FRIDAY** is an intelligent, personalized Telegram-based AI assistant inspired by Marvel's FRIDAY. Built with **TypeScript / Node.js**, powered by **Google Gemini 2.5 Flash** via the **Vercel AI SDK**, backed by **Supabase (pgvector)**, and equipped with **Tavily AI Web Search** and automated **minute-by-minute reminders & daily morning briefings**.
+**FRIDAY** is an intelligent, personalized Telegram-based AI assistant inspired by Marvel's FRIDAY. Built with **TypeScript / Node.js**, powered by **Google Gemini 3.6 Flash** via the **Vercel AI SDK**, backed by **Supabase (pgvector)**, and equipped with **Tavily AI Web Search** and automated **minute-by-minute reminders & daily morning briefings**.
 
 ---
 
@@ -24,7 +24,7 @@
 - **Runtime**: Node.js 22+ (TypeScript ESM, strict mode)
 - **Telegram Framework**: [grammY](https://grammy.dev)
 - **AI Engine**: [Vercel AI SDK](https://sdk.vercel.ai) (`ai`, `@ai-sdk/google`, `@ai-sdk/openai`)
-- **Primary LLM**: Google Gemini 2.5 Flash (with OpenAI fallback support)
+- **Primary LLM**: Google Gemini 3.6 Flash (with OpenAI fallback support)
 - **Vector Database**: [Supabase](https://supabase.com) (PostgreSQL + `pgvector` + HNSW indexing)
 - **Web Search**: [Tavily AI Search API](https://tavily.com)
 - **Scheduler**: [Croner](https://github.com/Hexagon/croner)
@@ -61,6 +61,7 @@ Fill in your credentials in `.env`:
 TELEGRAM_BOT_TOKEN="your-bot-token-from-botfather"
 TELEGRAM_ALLOWED_USER_ID="your-numeric-user-id"
 GEMINI_API_KEY="your-gemini-api-key"
+GEMINI_MODEL="gemini-3.6-flash"
 TAVILY_API_KEY="your-tavily-api-key"
 SUPABASE_URL="https://your-project.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"

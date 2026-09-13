@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import { env } from "../../config/env.js";
+import { DEFAULT_GEMINI_MODEL, env } from "../../config/env.js";
 import { getDataStore } from "../../db/datastore-provider.js";
 import { getCurrentBriefingTime } from "../../services/scheduler.service.js";
 
@@ -14,7 +14,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
   const hours = Math.floor(uptimeSeconds / 3600);
   const minutes = Math.floor((uptimeSeconds % 3600) / 60);
 
-  const modelLabel = DEFAULT_LLM_PROVIDER === "openai" ? "gpt-4o" : (GEMINI_MODEL ?? "gemini-2.5-flash");
+  const modelLabel = DEFAULT_LLM_PROVIDER === "openai" ? "gpt-4o" : (GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL);
   const briefingTime = getCurrentBriefingTime();
 
   const statusText = `📊 **FRIDAY Telemetry & Status**
