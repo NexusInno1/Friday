@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { InMemoryDataStore } from "../db/in-memory-datastore.js";
-import { AssistantEngine } from "./agent.service.js";
+import { AssistantEngine, resolveGeminiModel } from "./agent.service.js";
 import type { LanguageModelV1 } from "@ai-sdk/provider";
 
 describe("AssistantEngine", () => {
@@ -8,6 +8,12 @@ describe("AssistantEngine", () => {
 
   beforeEach(() => {
     store = new InMemoryDataStore();
+  });
+
+  it("migrates retired Gemini 2.0 configuration to the supported model", () => {
+    expect(resolveGeminiModel("gemini-2.0-flash")).toBe("gemini-2.5-flash");
+    expect(resolveGeminiModel("gemini-2.0-flash-lite")).toBe("gemini-2.5-flash");
+    expect(resolveGeminiModel("gemini-2.5-flash")).toBe("gemini-2.5-flash");
   });
 
   it("handles conversational turn, saves context, and returns response", async () => {
