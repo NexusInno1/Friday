@@ -28,3 +28,6 @@ Thumbs.db
 
 # Build artifacts
 *.tsbuildinfo
+
+# Temporary planning and agent scratch work
+.scratch/
