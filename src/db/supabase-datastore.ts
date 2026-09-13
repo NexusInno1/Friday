@@ -350,6 +350,55 @@ export class SupabaseDataStore implements DataStore {
     return data ?? [];
   }
 
+  async claimDueReminders(nowIso: string, leaseDurationMs: number): Promise<Reminder[]> {
+    const nowTime = new Date(nowIso).getTime();
+    const leaseUntilIso = new Date(nowTime + leaseDurationMs).toISOString();
+
+    const { data: candidates, error: findError } = await this.db
+      .from("reminders")
+      .select()
+      .lte("trigger_at", nowIso)
+      .eq("is_completed", false)
+      .eq("is_cancelled", false)
+      .or(`lease_until.is.null,lease_until.lt.${nowIso}`);
+
+    if (findError) {
+      console.error("[supabase-store] Error fetching due reminders to claim:", findError.message);
+      return [];
+    }
+
+    if (!candidates || candidates.length === 0) {
+      return [];
+    }
+
+    const claimed: Reminder[] = [];
+    for (const reminder of candidates) {
+      let updateQuery = this.db
+        .from("reminders")
+        .update({
+          lease_until: leaseUntilIso,
+          delivery_attempts: (reminder.delivery_attempts ?? 0) + 1,
+        })
+        .eq("id", reminder.id)
+        .eq("is_completed", false)
+        .eq("is_cancelled", false);
+
+      if (reminder.lease_until === null) {
+        updateQuery = updateQuery.is("lease_until", null);
+      } else {
+        updateQuery = updateQuery.eq("lease_until", reminder.lease_until);
+      }
+
+      const { data: updated, error: updateError } = await updateQuery.select().maybeSingle();
+
+      if (!updateError && updated) {
+        claimed.push(updated);
+      }
+    }
+
+    return claimed;
+  }
+
   async getReminder(id: string, userId: number): Promise<Reminder | null> {
     const { data, error } = await this.db
       .from("reminders")

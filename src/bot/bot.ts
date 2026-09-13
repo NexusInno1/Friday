@@ -1,5 +1,6 @@
 import { Bot } from "grammy";
 import { env } from "../config/env.js";
+import { chatScopeMiddleware } from "./middlewares/chat-scope.js";
 import { authMiddleware } from "./middlewares/auth.js";
 import { errorHandler } from "./middlewares/error.js";
 import { handleStart } from "./commands/start.js";
@@ -28,6 +29,9 @@ export function createBot(options: BotFactoryOptions = {}): Bot {
 
   // Global error boundary
   bot.catch(errorHandler);
+
+  // Ingress chat-scope guard (drops non-private chats)
+  bot.use(chatScopeMiddleware);
 
   // Security whitelist middleware (ADR-0001)
   bot.use(authMiddleware);

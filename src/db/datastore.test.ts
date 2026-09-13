@@ -98,4 +98,48 @@ describe("InMemoryDataStore", () => {
     const remainingDue = await store.getDueReminders(new Date().toISOString());
     expect(remainingDue.length).toBe(0);
   });
+
+  it("deletes messages by specific IDs and leaves other messages intact", async () => {
+    const convId = await store.getOrCreateConversation(12345);
+    await store.saveMessage(convId, "user", "Message 1");
+    await store.saveMessage(convId, "assistant", "Message 2");
+    await store.saveMessage(convId, "user", "Message 3");
+
+    const messagesBefore = await store.getConversationMessagesBefore(
+      convId,
+      new Date(Date.now() + 10000).toISOString()
+    );
+    expect(messagesBefore.length).toBe(3);
+
+    const deleted = await store.deleteMessagesByIds([messagesBefore[0].id, messagesBefore[2].id]);
+    expect(deleted).toBe(2);
+
+    const messagesAfter = await store.getConversationMessagesBefore(
+      convId,
+      new Date(Date.now() + 10000).toISOString()
+    );
+    expect(messagesAfter.length).toBe(1);
+    expect(messagesAfter[0].id).toBe(messagesBefore[1].id);
+  });
+
+  it("claims due reminders with lease and increments delivery_attempts", async () => {
+    const pastTime = new Date(Date.now() - 5000).toISOString();
+    const reminder = await store.createReminder({
+      userId: 200,
+      chatId: 200,
+      message: "Lease test reminder",
+      triggerAt: pastTime,
+    });
+
+    const nowIso = new Date().toISOString();
+    const claimed = await store.claimDueReminders(nowIso, 60_000);
+    expect(claimed.length).toBe(1);
+    expect(claimed[0].id).toBe(reminder.id);
+    expect(claimed[0].delivery_attempts).toBe(1);
+    expect(claimed[0].lease_until).toBeDefined();
+
+    // Immediate second claim with active lease yields 0
+    const secondClaim = await store.claimDueReminders(nowIso, 60_000);
+    expect(secondClaim.length).toBe(0);
+  });
 });

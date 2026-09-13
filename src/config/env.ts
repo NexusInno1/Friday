@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { z } from "zod";
 
-const EnvSchema = z.object({
+export const EnvSchema = z.object({
   // Telegram
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   TELEGRAM_ALLOWED_USER_ID: z
@@ -37,16 +37,22 @@ const EnvSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: z
     .string()
     .optional()
-    .transform((val) => (val === "" ? undefined : val))
-    .pipe(z.string().min(16, "TELEGRAM_WEBHOOK_SECRET must be at least 16 characters").optional()),
+    .transform((val) => (val === "" ? undefined : val)),
   WEBHOOK_PORT: z.string().transform(Number).default("3000"),
   HEALTH_PORT: z
     .string()
     .default(process.env.PORT ?? "8080")
     .transform(Number),
 
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-});
+    NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  })
+  .refine(
+    (data) => !data.WEBHOOK_URL || (Boolean(data.TELEGRAM_WEBHOOK_SECRET) && (data.TELEGRAM_WEBHOOK_SECRET?.length ?? 0) >= 16),
+    {
+      message: "TELEGRAM_WEBHOOK_SECRET is required and must be at least 16 characters when WEBHOOK_URL is configured",
+      path: ["TELEGRAM_WEBHOOK_SECRET"],
+    }
+  );
 
 export type Env = z.infer<typeof EnvSchema>;
 
@@ -75,9 +81,9 @@ export function validateEnv(): Env {
 
   // A public webhook without Telegram's secret header is forgeable. Fail closed
   // instead of silently running the owner-only bot behind an unauthenticated URL.
-  if (_env.WEBHOOK_URL && !_env.TELEGRAM_WEBHOOK_SECRET) {
+  if (_env.WEBHOOK_URL && (!_env.TELEGRAM_WEBHOOK_SECRET || _env.TELEGRAM_WEBHOOK_SECRET.length < 16)) {
     console.error(
-      "\n❌ TELEGRAM_WEBHOOK_SECRET is required when WEBHOOK_URL is configured.\n" +
+      "\n❌ TELEGRAM_WEBHOOK_SECRET is required (at least 16 characters) when WEBHOOK_URL is configured.\n" +
         "Set a random secret (at least 16 characters) or remove WEBHOOK_URL to use polling.\n"
     );
     process.exit(1);
@@ -106,7 +112,7 @@ export function env(): Env {
         USER_NAME: "Boss",
         BRIEFING_TIME: "07:00",
         WEBHOOK_URL: undefined,
-        TELEGRAM_WEBHOOK_SECRET: undefined,
+        TELEGRAM_WEBHOOK_SECRET: "mock_telegram_webhook_secret_16chars",
         WEBHOOK_PORT: 3000,
         HEALTH_PORT: 8080,
         NODE_ENV: "test",

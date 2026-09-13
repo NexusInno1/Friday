@@ -79,6 +79,7 @@ export interface DataStore {
   }): Promise<Reminder>;
   listActiveReminders(userId: number, limit?: number): Promise<Reminder[]>;
   getDueReminders(nowIso: string): Promise<Reminder[]>;
+  claimDueReminders(nowIso: string, leaseDurationMs: number): Promise<Reminder[]>;
   getReminder(id: string, userId: number): Promise<Reminder | null>;
   updateReminder(id: string, updates: Partial<Reminder>): Promise<Reminder>;
   getTodayReminders(userId: number, endOfDayIso: string): Promise<Reminder[]>;

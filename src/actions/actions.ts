@@ -234,6 +234,7 @@ export async function snoozeReminderAction(
   const updated = await store.updateReminder(reminderId, {
     trigger_at: newTriggerAt,
     is_completed: false,
+    lease_until: null,
   });
 
   return { reminder: updated, newTriggerAt };
@@ -249,7 +250,10 @@ export async function cancelReminderAction(
     throw new Error("Reminder not found.");
   }
 
-  await store.updateReminder(reminderId, { is_cancelled: true });
+  await store.updateReminder(reminderId, {
+    is_cancelled: true,
+    lease_until: null,
+  });
   return { success: true, cancelledId: reminderId };
 }
 

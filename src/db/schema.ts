@@ -144,6 +144,8 @@ export interface Database {
           is_recurring: boolean;
           is_completed: boolean;
           is_cancelled: boolean;
+          lease_until: string | null;
+          delivery_attempts: number;
           telegram_chat_id: number;
           created_at: string;
         };
@@ -156,6 +158,8 @@ export interface Database {
           is_recurring?: boolean;
           is_completed?: boolean;
           is_cancelled?: boolean;
+          lease_until?: string | null;
+          delivery_attempts?: number;
           telegram_chat_id: number;
           created_at?: string;
         };
@@ -168,6 +172,8 @@ export interface Database {
           is_recurring?: boolean;
           is_completed?: boolean;
           is_cancelled?: boolean;
+          lease_until?: string | null;
+          delivery_attempts?: number;
           telegram_chat_id?: number;
           created_at?: string;
         };

@@ -65,3 +65,135 @@ describe("DataStore message deletion safety", () => {
     expect(store.messages.has(allMessages[4].id)).toBe(true);
   });
 });
+
+describe("runFactCompaction safety & bounds", () => {
+  it("compacts and deletes only the fetched batch of 50 messages, leaving other 50 untouched", async () => {
+    const { InMemoryDataStore } = await import("../db/in-memory-datastore.js");
+    const { runFactCompaction } = await import("./compaction.service.js");
+    const store = new InMemoryDataStore();
+    const convId = await store.getOrCreateConversation(12345);
+
+    // Seed 100 messages older than 30 days
+    const baseTime = Date.now() - 35 * 24 * 60 * 60 * 1000;
+    for (let i = 0; i < 100; i++) {
+      const id = `msg-${i.toString().padStart(3, "0")}`;
+      store.messages.set(id, {
+        id,
+        conversation_id: convId,
+        role: "user",
+        content: `Old message ${i}`,
+        tool_name: null,
+        tool_call_id: null,
+        tokens_used: null,
+        created_at: new Date(baseTime + i * 1000).toISOString(),
+      });
+    }
+
+    expect(store.messages.size).toBe(100);
+
+    const mockExtractor = async (msgs: Array<{ id: string; role: string; content: string; created_at: string }>) => {
+      expect(msgs.length).toBe(50);
+      return {
+        success: true,
+        facts: [
+          { content: "User works at Acme Corp", importance: 4, tags: ["career"] },
+        ],
+      };
+    };
+
+    const result = await runFactCompaction(store, mockExtractor);
+
+    expect(result.factsExtracted).toBe(1);
+    expect(result.messagesDeleted).toBe(50);
+    expect(store.messages.size).toBe(50);
+
+    // The first 50 messages (msg-000 to msg-049) should be deleted
+    for (let i = 0; i < 50; i++) {
+      const id = `msg-${i.toString().padStart(3, "0")}`;
+      expect(store.messages.has(id)).toBe(false);
+    }
+
+    // The remaining 50 messages (msg-050 to msg-099) must remain intact
+    for (let i = 50; i < 100; i++) {
+      const id = `msg-${i.toString().padStart(3, "0")}`;
+      expect(store.messages.has(id)).toBe(true);
+    }
+
+    // Verify fact was stored in memories
+    expect(store.memories.size).toBe(1);
+    const storedMemory = Array.from(store.memories.values())[0];
+    expect(storedMemory.content).toBe("User works at Acme Corp");
+    expect(storedMemory.tags).toContain("compacted");
+  });
+
+  it("aborts deletion when LLM extraction fails", async () => {
+    const { InMemoryDataStore } = await import("../db/in-memory-datastore.js");
+    const { runFactCompaction } = await import("./compaction.service.js");
+    const store = new InMemoryDataStore();
+    const convId = await store.getOrCreateConversation(12345);
+
+    const baseTime = Date.now() - 35 * 24 * 60 * 60 * 1000;
+    for (let i = 0; i < 10; i++) {
+      const id = `msg-${i}`;
+      store.messages.set(id, {
+        id,
+        conversation_id: convId,
+        role: "user",
+        content: `Old message ${i}`,
+        tool_name: null,
+        tool_call_id: null,
+        tokens_used: null,
+        created_at: new Date(baseTime + i * 1000).toISOString(),
+      });
+    }
+
+    const failingExtractor = async () => ({
+      success: false,
+      facts: [],
+    });
+
+    const result = await runFactCompaction(store, failingExtractor);
+
+    expect(result.factsExtracted).toBe(0);
+    expect(result.messagesDeleted).toBe(0);
+    expect(store.messages.size).toBe(10);
+  });
+
+  it("aborts deletion when fact storage fails", async () => {
+    const { InMemoryDataStore } = await import("../db/in-memory-datastore.js");
+    const { runFactCompaction } = await import("./compaction.service.js");
+    const store = new InMemoryDataStore();
+    const convId = await store.getOrCreateConversation(12345);
+
+    const baseTime = Date.now() - 35 * 24 * 60 * 60 * 1000;
+    for (let i = 0; i < 10; i++) {
+      const id = `msg-${i}`;
+      store.messages.set(id, {
+        id,
+        conversation_id: convId,
+        role: "user",
+        content: `Old message ${i}`,
+        tool_name: null,
+        tool_call_id: null,
+        tokens_used: null,
+        created_at: new Date(baseTime + i * 1000).toISOString(),
+      });
+    }
+
+    // Force storeMemory to fail
+    store.storeMemory = async () => {
+      throw new Error("Simulated storage write error");
+    };
+
+    const successfulExtractor = async () => ({
+      success: true,
+      facts: [{ content: "Some fact", importance: 3, tags: [] }],
+    });
+
+    const result = await runFactCompaction(store, successfulExtractor);
+
+    expect(result.factsExtracted).toBe(0);
+    expect(result.messagesDeleted).toBe(0);
+    expect(store.messages.size).toBe(10);
+  });
+});
