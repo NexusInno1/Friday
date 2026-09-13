@@ -5,11 +5,11 @@ import type { Memory, Reminder } from "../db/schema.js";
 import { parseTimeString } from "../utils/time.js";
 import { Cron } from "croner";
 
-const EMBEDDING_MODEL = "text-embedding-004";
+const EMBEDDING_MODEL = "gemini-embedding-001";
 const SUPERSEDE_THRESHOLD = 0.85;
 
 /**
- * Generates text embeddings using Google's text-embedding-004 model.
+ * Generates text embeddings using Google's gemini-embedding-001 model (768 dimensions).
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   const { GEMINI_API_KEY } = env();
