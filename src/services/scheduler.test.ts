@@ -3,6 +3,7 @@ import { InMemoryDataStore } from "../db/in-memory-datastore.js";
 import {
   ProactiveScheduler,
   InMemoryDispatcher,
+  fetchBriefingSnapshot,
 } from "./scheduler.service.js";
 
 describe("ProactiveScheduler", () => {
@@ -139,5 +140,34 @@ describe("ProactiveScheduler", () => {
     expect(updated?.is_cancelled).toBe(true);
     expect(updated?.lease_until).toBeNull();
     expect(updated?.delivery_attempts).toBe(5);
+  });
+
+  describe("fetchBriefingSnapshot", () => {
+    it("returns null in mock/test environment without real Tavily key", async () => {
+      const snapshot = await fetchBriefingSnapshot("Asia/Kolkata");
+      expect(snapshot).toBeNull();
+    });
+
+    it("constructs categorized news sections when results are returned", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            results: [{ title: "Global Summit Reaches Historic Treaty" }],
+          }),
+        } as any);
+
+      try {
+        const snapshot = await fetchBriefingSnapshot("Asia/Kolkata");
+        expect(snapshot).toBeDefined();
+        if (snapshot) {
+          expect(snapshot).toContain("🌐 **International**");
+          expect(snapshot).toContain("Global Summit Reaches Historic Treaty");
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 });
