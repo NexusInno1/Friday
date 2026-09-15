@@ -19,18 +19,35 @@ import {
 export const webSearchTool = tool({
   description:
     "Search the web for real-time information, news, current events, facts, or research. " +
+    "When searching for news, current events, or today's briefings, ALWAYS set topic='news' and days=1 to guarantee fresh coverage from the last 24 hours. " +
+    "For comprehensive news requests, search across key pillars (International, Business, Sports, AI, and Regional). " +
     "Synthesize findings into an executive briefing with bold titles and structured bullet points. " +
     "Never dump raw snippets, unformatted lines, or conversational filler.",
   parameters: z.object({
     query: z.string().describe("The search query to look up"),
+    topic: z
+      .enum(["general", "news"])
+      .optional()
+      .describe(
+        "Search topic mode. MUST use 'news' for current events, news headlines, and today's updates."
+      ),
+    days: z
+      .number()
+      .optional()
+      .describe(
+        "Days back to search. Set to 1 for today's current news to ensure results are strictly from the last 24 hours."
+      ),
     max_results: z
       .number()
       .optional()
-      .default(5)
-      .describe("Maximum number of results to return"),
+      .describe("Maximum number of results to return (defaults to 5)"),
   }),
-  execute: async ({ query, max_results }) => {
-    return webSearchAction(query, max_results ?? 5);
+  execute: async ({ query, topic, days, max_results }) => {
+    return webSearchAction(query, {
+      maxResults: max_results ?? 5,
+      topic: topic ?? "general",
+      days: days ?? (topic === "news" ? 1 : undefined),
+    });
   },
 });
 
