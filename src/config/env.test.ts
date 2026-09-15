@@ -32,6 +32,14 @@ describe("EnvSchema - TELEGRAM_WEBHOOK_SECRET and WEBHOOK_URL rules", () => {
     }
   });
 
+  it("defaults Gemini to the current supported Flash model", () => {
+    const result = EnvSchema.safeParse(baseValidEnv);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.GEMINI_MODEL).toBe(DEFAULT_GEMINI_MODEL);
+    }
+  });
+
   it("passes when WEBHOOK_URL is empty string and secret is omitted", () => {
     const result = EnvSchema.safeParse({
       ...baseValidEnv,

@@ -83,50 +83,78 @@ export class InMemoryDispatcher implements NotificationDispatcher {
 
 // ─── Live Briefing Snapshot ──────────────────────────────────────────────────
 
-async function fetchBriefingSnapshot(userTimezone: string): Promise<string | null> {
+export interface BriefingCategoryDefinition {
+  category: string;
+  emoji: string;
+  query: string;
+}
+
+export const BRIEFING_CATEGORIES: BriefingCategoryDefinition[] = [
+  { category: "International", emoji: "🌐", query: "breaking world news international developments" },
+  { category: "Business & Economy", emoji: "💼", query: "stock markets global economy finance business news" },
+  { category: "Sports", emoji: "⚽", query: "major sports breaking news matches tournaments" },
+  { category: "AI & Technology", emoji: "🤖", query: "artificial intelligence AI tech breakthroughs industry news" },
+  { category: "Regional (India)", emoji: "🇮🇳", query: "India national news top headlines government affairs" },
+];
+
+export async function fetchBriefingSnapshot(userTimezone: string): Promise<string | null> {
   const { TAVILY_API_KEY } = env();
-  const dayStr = new Date().toLocaleDateString("en-IN", {
-    timeZone: userTimezone,
-    weekday: "long",
-  });
-  try {
-    const response = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${TAVILY_API_KEY}`,
-      },
-      body: JSON.stringify({
-        api_key: TAVILY_API_KEY,
-        query: `top tech and world news headlines for ${dayStr}`,
-        max_results: 3,
-        search_depth: "basic",
-        include_answer: true,
-        include_raw_content: false,
-      }),
-    });
-    if (!response.ok) return null;
-    const data = (await response.json()) as {
-      answer?: string;
-      results?: Array<{ title?: string; url?: string }>;
-    };
-    if (data.answer) {
-      const cleaned = data.answer
-        .replace(/^Here('s| is) a summary of [^:\n]+:\s*/i, "")
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => (line.startsWith("•") || line.startsWith("-") ? line : `• ${line}`))
-        .join("\n\n");
-      if (cleaned) return cleaned;
-    }
-    if (data.results && data.results.length > 0) {
-      return data.results
-        .filter((r) => r.title)
-        .map((r) => `• ${r.title?.trim()}`)
-        .join("\n\n");
-    }
+  if (!TAVILY_API_KEY || TAVILY_API_KEY === "mock_tavily_key") {
     return null;
+  }
+
+  try {
+    const results = await Promise.allSettled(
+      BRIEFING_CATEGORIES.map(async (cat) => {
+        const response = await fetch("https://api.tavily.com/search", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${TAVILY_API_KEY}`,
+          },
+          body: JSON.stringify({
+            api_key: TAVILY_API_KEY,
+            query: cat.query,
+            topic: "news",
+            days: 1,
+            max_results: 3,
+            search_depth: "basic",
+            include_answer: false,
+          }),
+        });
+
+        if (!response.ok) return null;
+        const data = (await response.json()) as {
+          results?: Array<{ title?: string }>;
+        };
+
+        const items = (data.results ?? [])
+          .filter(
+            (r) =>
+              r.title &&
+              !r.title.toLowerCase().includes("school assembly")
+          )
+          .slice(0, 2)
+          .map((r) => r.title?.trim())
+          .filter(Boolean) as string[];
+
+        return {
+          ...cat,
+          items,
+        };
+      })
+    );
+
+    const sections: string[] = [];
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value && r.value.items.length > 0) {
+        const cat = r.value;
+        const bullets = cat.items.map((title) => `  • ${title}`).join("\n");
+        sections.push(`${cat.emoji} **${cat.category}**\n${bullets}`);
+      }
+    }
+
+    return sections.length > 0 ? sections.join("\n\n") : null;
   } catch {
     return null;
   }
@@ -277,7 +305,7 @@ export class ProactiveScheduler {
       let briefing = `☀️ **Good Morning, ${USER_NAME}!**\n_${now}_\n\n`;
 
       if (liveSnapshot) {
-        briefing += `📰 **Today's Quick Briefing:**\n${liveSnapshot}\n\n`;
+        briefing += `📰 **Today's Intelligence Briefing:**\n\n${liveSnapshot}\n\n`;
       }
 
       if (todayReminders.length > 0) {
