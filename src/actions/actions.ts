@@ -111,19 +111,57 @@ export async function recallMemoriesAction(
 
 // ─── Web Search Action ───────────────────────────────────────────────────────
 
+export interface WebSearchOptions {
+  maxResults?: number;
+  topic?: "general" | "news";
+  days?: number;
+}
+
+export interface WebSearchResultItem {
+  title: string;
+  url: string;
+  snippet: string;
+  publishedDate?: string | null;
+}
+
 export interface WebSearchResult {
   answer: string | null;
-  results: Array<{ title: string; url: string; snippet: string }>;
+  results: WebSearchResultItem[];
 }
 
 export async function webSearchAction(
   query: string,
-  maxResults: number = 5
+  optionsOrMaxResults: number | WebSearchOptions = 5
 ): Promise<WebSearchResult> {
   const { TAVILY_API_KEY } = env();
   const trimmed = query.trim();
   if (!trimmed) {
     throw new Error("Search query cannot be empty.");
+  }
+
+  const options: WebSearchOptions =
+    typeof optionsOrMaxResults === "number"
+      ? { maxResults: optionsOrMaxResults }
+      : optionsOrMaxResults;
+
+  const maxResults = options.maxResults ?? 5;
+  const topic = options.topic ?? "general";
+  const days = options.days ?? (topic === "news" ? 1 : undefined);
+
+  const payload: Record<string, unknown> = {
+    api_key: TAVILY_API_KEY,
+    query: trimmed,
+    max_results: maxResults,
+    search_depth: "basic",
+    include_answer: true,
+    include_raw_content: false,
+  };
+
+  if (topic === "news") {
+    payload.topic = "news";
+    payload.days = days ?? 1;
+  } else if (days !== undefined) {
+    payload.days = days;
   }
 
   const response = await fetch("https://api.tavily.com/search", {
@@ -132,14 +170,7 @@ export async function webSearchAction(
       "Content-Type": "application/json",
       Authorization: `Bearer ${TAVILY_API_KEY}`,
     },
-    body: JSON.stringify({
-      api_key: TAVILY_API_KEY,
-      query: trimmed,
-      max_results: maxResults,
-      search_depth: "basic",
-      include_answer: true,
-      include_raw_content: false,
-    }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -151,7 +182,12 @@ export async function webSearchAction(
 
   const data = (await response.json()) as {
     answer?: string;
-    results?: Array<{ title?: string; url?: string; content?: string }>;
+    results?: Array<{
+      title?: string;
+      url?: string;
+      content?: string;
+      published_date?: string;
+    }>;
   };
 
   return {
@@ -160,6 +196,7 @@ export async function webSearchAction(
       title: r.title ?? "Untitled",
       url: r.url ?? "",
       snippet: r.content ? r.content.slice(0, 300) : "",
+      publishedDate: r.published_date ?? null,
     })),
   };
 }

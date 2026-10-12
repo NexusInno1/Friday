@@ -83,23 +83,25 @@ export class InMemoryDispatcher implements NotificationDispatcher {
 
 // ─── Live Briefing Snapshot ──────────────────────────────────────────────────
 
-interface BriefingSubQuery {
+export interface BriefingSubQuery {
   query: string;
   count: number;
 }
 
-interface BriefingCategory {
-  label: string;
+export interface BriefingCategory {
+  category: string;
+  label?: string;
   emoji: string;
   query?: string;
-  /** Number of headlines to show for this category (when single query). */
   count?: number;
-  /** Sub-queries for split category coverage (e.g. international vs domestic). */
   subQueries?: BriefingSubQuery[];
 }
 
+export type BriefingCategoryDefinition = BriefingCategory;
+
 export const BRIEFING_CATEGORIES: BriefingCategory[] = [
   {
+    category: "International",
     label: "International",
     emoji: "🌐",
     query:
@@ -107,6 +109,7 @@ export const BRIEFING_CATEGORIES: BriefingCategory[] = [
     count: 5,
   },
   {
+    category: "Business & Economy",
     label: "Business & Economy",
     emoji: "💼",
     subQueries: [
@@ -123,6 +126,7 @@ export const BRIEFING_CATEGORIES: BriefingCategory[] = [
     ],
   },
   {
+    category: "Sports",
     label: "Sports",
     emoji: "⚽",
     query:
@@ -130,6 +134,7 @@ export const BRIEFING_CATEGORIES: BriefingCategory[] = [
     count: 2,
   },
   {
+    category: "AI & Technology",
     label: "AI & Technology",
     emoji: "🤖",
     query:
@@ -137,6 +142,7 @@ export const BRIEFING_CATEGORIES: BriefingCategory[] = [
     count: 5,
   },
   {
+    category: "Regional (India)",
     label: "Regional (India)",
     emoji: "🇮🇳",
     query:
@@ -147,9 +153,9 @@ export const BRIEFING_CATEGORIES: BriefingCategory[] = [
 
 /** Returns true if a result title is low-quality (homepage, meta-article, truncated). */
 function isLowQualityTitle(title: string): boolean {
-  const t = title.trim();
-  if (t.length < 20) return true;
-  if (t.endsWith("...") || t.endsWith("…")) return true;
+  const trimmedTitle = title.trim();
+  if (trimmedTitle.length < 20) return true;
+  if (trimmedTitle.endsWith("...") || trimmedTitle.endsWith("…")) return true;
   const badPatterns = [
     /^latest news today/i,
     /^breaking news$/i,
@@ -161,7 +167,7 @@ function isLowQualityTitle(title: string): boolean {
     /school assembly/i,
     /^\w+ \d{1,2}, \d{4}: top news/i,
   ];
-  return badPatterns.some((re) => re.test(t));
+  return badPatterns.some((re) => re.test(trimmedTitle));
 }
 
 async function fetchSingleQueryBullets(
@@ -229,9 +235,11 @@ async function fetchCategoryNews(
   return "";
 }
 
-export async function fetchBriefingSnapshot(_userTimezone: string): Promise<string | null> {
+export async function fetchBriefingSnapshot(_ownerTimezone: string): Promise<string | null> {
   const { TAVILY_API_KEY } = env();
-  if (!TAVILY_API_KEY) return null;
+  if (!TAVILY_API_KEY || TAVILY_API_KEY === "mock_tavily_key") {
+    return null;
+  }
 
   const results = await Promise.allSettled(
     BRIEFING_CATEGORIES.map((cat) => fetchCategoryNews(TAVILY_API_KEY, cat))
@@ -242,13 +250,13 @@ export async function fetchBriefingSnapshot(_userTimezone: string): Promise<stri
     const cat = BRIEFING_CATEGORIES[i];
     const result = results[i];
     const bullets =
-      result.status === "fulfilled" && result.value.trim() ? result.value : null;
-    sections.push(
-      `${cat.emoji} **${cat.label}**\n${bullets ?? "  • No major stories right now."}`
-    );
+      result.status === "fulfilled" && result.value.trim() ? result.value.trim() : null;
+    if (bullets) {
+      sections.push(`${cat.emoji} **${cat.label ?? cat.category}**\n${bullets}`);
+    }
   }
 
-  return sections.join("\n\n");
+  return sections.length > 0 ? sections.join("\n\n") : null;
 }
 
 // ─── Deep Module: ProactiveScheduler ─────────────────────────────────────────
