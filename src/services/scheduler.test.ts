@@ -5,6 +5,7 @@ import {
   InMemoryDispatcher,
   fetchBriefingSnapshot,
 } from "./scheduler.service.js";
+import { env, setEnv } from "../config/env.js";
 
 describe("ProactiveScheduler", () => {
   let store: InMemoryDataStore;
@@ -148,7 +149,28 @@ describe("ProactiveScheduler", () => {
       expect(snapshot).toBeNull();
     });
 
+    it("returns null when external search fails or produces zero results", async () => {
+      const current = env();
+      setEnv({ ...current, TAVILY_API_KEY: "test_live_key" });
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () =>
+        ({
+          ok: false,
+          status: 500,
+        } as any);
+
+      try {
+        const snapshot = await fetchBriefingSnapshot("Asia/Kolkata");
+        expect(snapshot).toBeNull();
+      } finally {
+        globalThis.fetch = originalFetch;
+        setEnv(current);
+      }
+    });
+
     it("constructs categorized news sections when results are returned", async () => {
+      const current = env();
+      setEnv({ ...current, TAVILY_API_KEY: "test_live_key" });
       const originalFetch = globalThis.fetch;
       globalThis.fetch = async () =>
         ({
@@ -160,13 +182,12 @@ describe("ProactiveScheduler", () => {
 
       try {
         const snapshot = await fetchBriefingSnapshot("Asia/Kolkata");
-        expect(snapshot).toBeDefined();
-        if (snapshot) {
-          expect(snapshot).toContain("🌐 **International**");
-          expect(snapshot).toContain("Global Summit Reaches Historic Treaty");
-        }
+        expect(snapshot).not.toBeNull();
+        expect(snapshot).toContain("🌐 **International**");
+        expect(snapshot).toContain("Global Summit Reaches Historic Treaty");
       } finally {
         globalThis.fetch = originalFetch;
+        setEnv(current);
       }
     });
   });

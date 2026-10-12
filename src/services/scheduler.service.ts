@@ -83,81 +83,180 @@ export class InMemoryDispatcher implements NotificationDispatcher {
 
 // ─── Live Briefing Snapshot ──────────────────────────────────────────────────
 
-export interface BriefingCategoryDefinition {
-  category: string;
-  emoji: string;
+export interface BriefingSubQuery {
   query: string;
+  count: number;
 }
 
-export const BRIEFING_CATEGORIES: BriefingCategoryDefinition[] = [
-  { category: "International", emoji: "🌐", query: "breaking world news international developments" },
-  { category: "Business & Economy", emoji: "💼", query: "stock markets global economy finance business news" },
-  { category: "Sports", emoji: "⚽", query: "major sports breaking news matches tournaments" },
-  { category: "AI & Technology", emoji: "🤖", query: "artificial intelligence AI tech breakthroughs industry news" },
-  { category: "Regional (India)", emoji: "🇮🇳", query: "India national news top headlines government affairs" },
+export interface BriefingCategory {
+  category: string;
+  label?: string;
+  emoji: string;
+  query?: string;
+  count?: number;
+  subQueries?: BriefingSubQuery[];
+}
+
+export type BriefingCategoryDefinition = BriefingCategory;
+
+export const BRIEFING_CATEGORIES: BriefingCategory[] = [
+  {
+    category: "International",
+    label: "International",
+    emoji: "🌐",
+    query:
+      "breaking world news international geopolitics diplomacy conflicts today",
+    count: 5,
+  },
+  {
+    category: "Business & Economy",
+    label: "Business & Economy",
+    emoji: "💼",
+    subQueries: [
+      {
+        query:
+          "breaking international business news world economy financial markets corporate earnings today",
+        count: 2,
+      },
+      {
+        query:
+          "India business news Indian economy Sensex Nifty RBI corporate earnings today",
+        count: 3,
+      },
+    ],
+  },
+  {
+    category: "Sports",
+    label: "Sports",
+    emoji: "⚽",
+    query:
+      "football cricket tennis NBA NFL major sports match results breaking news today",
+    count: 2,
+  },
+  {
+    category: "AI & Technology",
+    label: "AI & Technology",
+    emoji: "🤖",
+    query:
+      "OpenAI Google Meta Microsoft Apple AI artificial intelligence tech product launch breakthrough today",
+    count: 5,
+  },
+  {
+    category: "Regional (India)",
+    label: "Regional (India)",
+    emoji: "🇮🇳",
+    query:
+      "India breaking news politics economy government developments today",
+    count: 5,
+  },
 ];
 
-export async function fetchBriefingSnapshot(userTimezone: string): Promise<string | null> {
+/** Returns true if a result title is low-quality (homepage, meta-article, truncated). */
+function isLowQualityTitle(title: string): boolean {
+  const trimmedTitle = title.trim();
+  if (trimmedTitle.length < 20) return true;
+  if (trimmedTitle.endsWith("...") || trimmedTitle.endsWith("…")) return true;
+  const badPatterns = [
+    /^latest news today/i,
+    /^breaking news$/i,
+    /latest news from india and the world/i,
+    /top news headlines from india/i,
+    /news updates \| /i,
+    /^the hindu:/i,
+    /morning news brief/i,
+    /school assembly/i,
+    /^\w+ \d{1,2}, \d{4}: top news/i,
+  ];
+  return badPatterns.some((re) => re.test(trimmedTitle));
+}
+
+async function fetchSingleQueryBullets(
+  apiKey: string,
+  query: string,
+  count: number
+): Promise<string[]> {
+  try {
+    const response = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        topic: "news",
+        days: 1,
+        max_results: 10,
+        search_depth: "basic",
+        include_answer: false,
+        include_raw_content: false,
+      }),
+    });
+
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as {
+      results?: Array<{ title?: string; url?: string }>;
+    };
+
+    return (data.results ?? [])
+      .filter((r) => r.title && !isLowQualityTitle(r.title))
+      .slice(0, count)
+      .map((r) => `  • ${r.title!.trim()}`);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchCategoryNews(
+  apiKey: string,
+  category: BriefingCategory
+): Promise<string> {
+  if (category.subQueries && category.subQueries.length > 0) {
+    const subResults = await Promise.all(
+      category.subQueries.map((sub) =>
+        fetchSingleQueryBullets(apiKey, sub.query, sub.count)
+      )
+    );
+    const bullets = subResults.flat();
+    return bullets.join("\n");
+  }
+
+  if (category.query && category.count) {
+    const bullets = await fetchSingleQueryBullets(
+      apiKey,
+      category.query,
+      category.count
+    );
+    return bullets.join("\n");
+  }
+
+  return "";
+}
+
+export async function fetchBriefingSnapshot(_ownerTimezone: string): Promise<string | null> {
   const { TAVILY_API_KEY } = env();
   if (!TAVILY_API_KEY || TAVILY_API_KEY === "mock_tavily_key") {
     return null;
   }
 
-  try {
-    const results = await Promise.allSettled(
-      BRIEFING_CATEGORIES.map(async (cat) => {
-        const response = await fetch("https://api.tavily.com/search", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${TAVILY_API_KEY}`,
-          },
-          body: JSON.stringify({
-            api_key: TAVILY_API_KEY,
-            query: cat.query,
-            topic: "news",
-            days: 1,
-            max_results: 3,
-            search_depth: "basic",
-            include_answer: false,
-          }),
-        });
+  const results = await Promise.allSettled(
+    BRIEFING_CATEGORIES.map((cat) => fetchCategoryNews(TAVILY_API_KEY, cat))
+  );
 
-        if (!response.ok) return null;
-        const data = (await response.json()) as {
-          results?: Array<{ title?: string }>;
-        };
-
-        const items = (data.results ?? [])
-          .filter(
-            (r) =>
-              r.title &&
-              !r.title.toLowerCase().includes("school assembly")
-          )
-          .slice(0, 2)
-          .map((r) => r.title?.trim())
-          .filter(Boolean) as string[];
-
-        return {
-          ...cat,
-          items,
-        };
-      })
-    );
-
-    const sections: string[] = [];
-    for (const r of results) {
-      if (r.status === "fulfilled" && r.value && r.value.items.length > 0) {
-        const cat = r.value;
-        const bullets = cat.items.map((title) => `  • ${title}`).join("\n");
-        sections.push(`${cat.emoji} **${cat.category}**\n${bullets}`);
-      }
+  const sections: string[] = [];
+  for (let i = 0; i < BRIEFING_CATEGORIES.length; i++) {
+    const cat = BRIEFING_CATEGORIES[i];
+    const result = results[i];
+    const bullets =
+      result.status === "fulfilled" && result.value.trim() ? result.value.trim() : null;
+    if (bullets) {
+      sections.push(`${cat.emoji} **${cat.label ?? cat.category}**\n${bullets}`);
     }
-
-    return sections.length > 0 ? sections.join("\n\n") : null;
-  } catch {
-    return null;
   }
+
+  return sections.length > 0 ? sections.join("\n\n") : null;
 }
 
 // ─── Deep Module: ProactiveScheduler ─────────────────────────────────────────
