@@ -101,6 +101,55 @@ describe("EnvSchema - TELEGRAM_WEBHOOK_SECRET and WEBHOOK_URL rules", () => {
     }
   });
 
+  it("strips trailing slashes from WEBHOOK_URL", () => {
+    const result = EnvSchema.safeParse({
+      ...baseValidEnv,
+      WEBHOOK_URL: "https://friday.up.railway.app///",
+      TELEGRAM_WEBHOOK_SECRET: "super_secret_webhook_token_12345",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.WEBHOOK_URL).toBe("https://friday.up.railway.app");
+    }
+  });
+
+  it("prioritizes process.env.PORT over HEALTH_PORT when both are provided", () => {
+    const originalPort = process.env.PORT;
+    try {
+      process.env.PORT = "4500";
+      const result = EnvSchema.safeParse({
+        ...baseValidEnv,
+        HEALTH_PORT: "8080",
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.HEALTH_PORT).toBe(4500);
+      }
+    } finally {
+      if (originalPort !== undefined) {
+        process.env.PORT = originalPort;
+      } else {
+        delete process.env.PORT;
+      }
+    }
+  });
+
+  it("defaults HEALTH_PORT to 8080 when neither PORT nor HEALTH_PORT is provided", () => {
+    const originalPort = process.env.PORT;
+    try {
+      delete process.env.PORT;
+      const result = EnvSchema.safeParse(baseValidEnv);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.HEALTH_PORT).toBe(8080);
+      }
+    } finally {
+      if (originalPort !== undefined) {
+        process.env.PORT = originalPort;
+      }
+    }
+  });
+
   it("returns a mock secret of at least 16 characters in test fallback mode", () => {
     const loadedEnv = env();
     expect(loadedEnv.TELEGRAM_WEBHOOK_SECRET).toBeDefined();

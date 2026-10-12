@@ -71,12 +71,13 @@ async function main() {
       })
     );
 
-    await bot.api.setWebhook(`${envConfig.WEBHOOK_URL}${webhookPath}`, {
+    const webhookBaseUrl = envConfig.WEBHOOK_URL.replace(/\/+$/, "");
+    await bot.api.setWebhook(`${webhookBaseUrl}${webhookPath}`, {
       allowed_updates: ["message", "callback_query"],
       secret_token: webhookSecret,
     });
 
-    console.log(`✅ Webhook set to: ${envConfig.WEBHOOK_URL}${webhookPath}`);
+    console.log(`✅ Webhook set to: ${webhookBaseUrl}${webhookPath}`);
   } else {
     console.log("⚡ Starting FRIDAY in Long Polling mode (dev / standalone)...");
     await bot.start({
