@@ -8,6 +8,7 @@ import {
   updateBriefingTimeAction,
   checkMemoryContradiction,
   EMBEDDING_MODEL,
+  webSearchAction,
 } from "./actions.js";
 import type { LanguageModelV1 } from "@ai-sdk/provider";
 
@@ -213,6 +214,52 @@ describe("Core Actions", () => {
         mockModel as any
       );
       expect(result).toBe(false);
+    });
+  });
+
+  describe("webSearchAction", () => {
+    it("rejects empty query", async () => {
+      await expect(webSearchAction("   ")).rejects.toThrow(/Search query cannot be empty/);
+    });
+
+    it("sends topic='news' and days=1 by default when searching news", async () => {
+      const originalFetch = globalThis.fetch;
+      let capturedBody: any = null;
+
+      globalThis.fetch = async (_url, init) => {
+        capturedBody = JSON.parse(init?.body as string);
+        return {
+          ok: true,
+          json: async () => ({
+            answer: "Summary of AI news",
+            results: [
+              {
+                title: "Test News Article",
+                url: "https://example.com/news",
+                content: "Breaking tech content",
+                published_date: "Sun, 13 Sep 2026 12:00:00 GMT",
+              },
+            ],
+          }),
+        } as any;
+      };
+
+      try {
+        const result = await webSearchAction("AI breakthroughs", {
+          topic: "news",
+          maxResults: 3,
+        });
+
+        expect(capturedBody).toBeDefined();
+        expect(capturedBody.topic).toBe("news");
+        expect(capturedBody.days).toBe(1);
+        expect(capturedBody.max_results).toBe(3);
+        expect(result.results.length).toBe(1);
+        expect(result.results[0].publishedDate).toBe("Sun, 13 Sep 2026 12:00:00 GMT");
+        expect(result.results[0].title).toBe("Test News Article");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });

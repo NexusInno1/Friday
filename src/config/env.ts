@@ -35,16 +35,19 @@ export const EnvSchema = z.object({
   WEBHOOK_URL: z
     .string()
     .optional()
-    .transform((val) => (val === "" ? undefined : val))
+    .transform((val) => {
+      if (!val || val.trim() === "") return undefined;
+      return val.trim().replace(/\/+$/, "");
+    })
     .pipe(z.string().url().optional()), // only validate as URL if actually set
   TELEGRAM_WEBHOOK_SECRET: z
     .string()
     .optional()
     .transform((val) => (val === "" ? undefined : val)),
   HEALTH_PORT: z
-    .string()
-    .default(process.env.PORT ?? "8080")
-    .transform(Number),
+    .union([z.string(), z.number()])
+    .optional()
+    .transform((val) => Number(process.env.PORT || val || "8080")),
 
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   })

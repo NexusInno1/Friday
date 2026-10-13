@@ -3,7 +3,9 @@ import { InMemoryDataStore } from "../db/in-memory-datastore.js";
 import {
   ProactiveScheduler,
   InMemoryDispatcher,
+  fetchBriefingSnapshot,
 } from "./scheduler.service.js";
+import { env, setEnv } from "../config/env.js";
 
 describe("ProactiveScheduler", () => {
   let store: InMemoryDataStore;
@@ -166,5 +168,54 @@ describe("ProactiveScheduler", () => {
     resolveSendMessage!();
     const firstCallCount = await firstCallPromise;
     expect(firstCallCount).toBe(1);
+  });
+
+  describe("fetchBriefingSnapshot", () => {
+    it("returns null in mock/test environment without real Tavily key", async () => {
+      const snapshot = await fetchBriefingSnapshot("Asia/Kolkata");
+      expect(snapshot).toBeNull();
+    });
+
+    it("returns null when external search fails or produces zero results", async () => {
+      const current = env();
+      setEnv({ ...current, TAVILY_API_KEY: "test_live_key" });
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () =>
+        ({
+          ok: false,
+          status: 500,
+        } as any);
+
+      try {
+        const snapshot = await fetchBriefingSnapshot("Asia/Kolkata");
+        expect(snapshot).toBeNull();
+      } finally {
+        globalThis.fetch = originalFetch;
+        setEnv(current);
+      }
+    });
+
+    it("constructs categorized news sections when results are returned", async () => {
+      const current = env();
+      setEnv({ ...current, TAVILY_API_KEY: "test_live_key" });
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            results: [{ title: "Global Summit Reaches Historic Treaty" }],
+          }),
+        } as any);
+
+      try {
+        const snapshot = await fetchBriefingSnapshot("Asia/Kolkata");
+        expect(snapshot).not.toBeNull();
+        expect(snapshot).toContain("🌐 **International**");
+        expect(snapshot).toContain("Global Summit Reaches Historic Treaty");
+      } finally {
+        globalThis.fetch = originalFetch;
+        setEnv(current);
+      }
+    });
   });
 });
