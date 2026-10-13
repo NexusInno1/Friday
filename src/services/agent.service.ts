@@ -11,39 +11,9 @@ import { createTools } from "../tools/registry.js";
 
 const DEFAULT_MAX_STEPS = 10;
 const DEFAULT_TIMEOUT_MS = 60_000;
-const RETIRED_GEMINI_MODELS = new Set([
-  "gemini-2.0-flash",
-  "gemini-2.0-flash-lite",
-]);
+import { getModel, resolveGeminiModel } from "./model.service.js";
 
-/**
- * Resolves the configured Gemini model while keeping deployments alive when
- * an old environment variable still names a shut-down 2.0 model.
- */
-export function resolveGeminiModel(configuredModel?: string): string {
-  const model = configuredModel?.trim() || DEFAULT_GEMINI_MODEL;
-
-  if (RETIRED_GEMINI_MODELS.has(model)) {
-    console.warn(
-      `[model] ${model} is retired; using ${DEFAULT_GEMINI_MODEL}. Update GEMINI_MODEL in the deployment environment.`
-    );
-    return DEFAULT_GEMINI_MODEL;
-  }
-
-  return model;
-}
-
-export function getModel(): LanguageModel {
-  const { DEFAULT_LLM_PROVIDER, GEMINI_API_KEY, OPENAI_API_KEY, GEMINI_MODEL } = env();
-
-  if (DEFAULT_LLM_PROVIDER === "openai" && OPENAI_API_KEY) {
-    const openai = createOpenAI({ apiKey: OPENAI_API_KEY });
-    return openai("gpt-4o");
-  }
-
-  const google = createGoogleGenerativeAI({ apiKey: GEMINI_API_KEY });
-  return google(resolveGeminiModel(GEMINI_MODEL));
-}
+export { getModel, resolveGeminiModel };
 
 export interface AssistantEngineOptions {
   store?: DataStore;
@@ -105,8 +75,17 @@ export class AssistantEngine {
       console.warn("[engine] Memory grounding failed:", err);
     }
 
+    let customInstructions: string | null = null;
+    try {
+      const profile = await this.store.getUserProfile(env().TELEGRAM_ALLOWED_USER_ID);
+      customInstructions = profile?.custom_instructions ?? null;
+    } catch (err) {
+      console.warn("[engine] Failed to load user profile instructions:", err);
+    }
+
     const systemPrompt =
-      buildSystemPrompt() + (memoryContextString ? `\n\n${memoryContextString}` : "");
+      buildSystemPrompt({ now: new Date(), customInstructions }) +
+      (memoryContextString ? `\n\n${memoryContextString}` : "");
 
     // 5. Build messages array with security <user_message> tags
     const previousMessages = history.slice(0, -1);
@@ -122,7 +101,11 @@ export class AssistantEngine {
         }));
 
     // 6. Instantiate tools scoped to this turn
-    const scopedTools = createTools({ chatId, store: this.store });
+    const scopedTools = createTools({
+      chatId,
+      userId: env().TELEGRAM_ALLOWED_USER_ID,
+      store: this.store,
+    });
 
     // 7. Setup cancelable timeout controller
     const abortController = new AbortController();

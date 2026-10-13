@@ -219,14 +219,57 @@ export function createTools(context?: ToolContext) {
     },
   });
 
+  const storeMemoryScopedTool = tool({
+    description: storeMemoryTool.description,
+    parameters: storeMemoryTool.parameters,
+    execute: async ({ content, tags, importance }) => {
+      await rememberAction(content, tags, importance, store, targetUserId);
+      return { success: true, stored: content };
+    },
+  });
+
+  const recallMemoryScopedTool = tool({
+    description: recallMemoryTool.description,
+    parameters: recallMemoryTool.parameters,
+    execute: async ({ query, limit }) => {
+      const memories = await recallMemoriesAction(query, limit, store, targetUserId);
+      if (memories.length === 0) {
+        return { found: false, memories: [] };
+      }
+      return {
+        found: true,
+        memories: memories.map((m) => ({
+          content: m.content,
+          tags: m.tags,
+          importance: m.importance,
+          date: m.created_at,
+        })),
+      };
+    },
+  });
+
+  const setBriefingTimeScopedTool = tool({
+    description: setBriefingTimeTool.description,
+    parameters: setBriefingTimeTool.parameters,
+    execute: async ({ time }) => {
+      const result = await updateBriefingTimeAction(time, targetUserId, store);
+      return {
+        success: true,
+        new_briefing_time: result.time,
+        timezone: env().USER_TIMEZONE,
+        message: `Daily morning briefing time successfully updated to ${result.time} (${env().USER_TIMEZONE}).`,
+      };
+    },
+  });
+
   return {
     web_search: webSearchTool,
-    store_memory: storeMemoryTool,
-    recall_memory: recallMemoryTool,
+    store_memory: storeMemoryScopedTool,
+    recall_memory: recallMemoryScopedTool,
     create_reminder: createReminderScopedTool,
     list_reminders: listRemindersScopedTool,
     cancel_reminder: cancelReminderScopedTool,
     snooze_reminder: snoozeReminderScopedTool,
-    set_briefing_time: setBriefingTimeTool,
+    set_briefing_time: setBriefingTimeScopedTool,
   };
 }

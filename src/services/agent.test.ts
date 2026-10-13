@@ -72,4 +72,37 @@ describe("AssistantEngine", () => {
     const reply = await engine.reply(12345, "Do something");
     expect(reply).toBe("✓ Done, Boss.");
   });
+
+  it("incorporates custom_instructions from user profile into system prompt", async () => {
+    let capturedPrompt = "";
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "mock-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate(options: any) {
+        capturedPrompt = JSON.stringify(options);
+        return {
+          text: "Instructions applied.",
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 5 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      async doStream() {
+        throw new Error("Not implemented");
+      },
+    };
+
+    const { env } = await import("../config/env.js");
+    await store.upsertUserProfile({
+      id: env().TELEGRAM_ALLOWED_USER_ID,
+      custom_instructions: "Speak like a Victorian gentleman.",
+    });
+
+    const engine = new AssistantEngine({ store, model: mockModel as any });
+    const reply = await engine.reply(12345, "Hello");
+    expect(reply).toBe("Instructions applied.");
+    expect(capturedPrompt).toContain("Speak like a Victorian gentleman.");
+  });
 });

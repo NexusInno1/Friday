@@ -44,7 +44,6 @@ export const EnvSchema = z.object({
     .string()
     .optional()
     .transform((val) => (val === "" ? undefined : val)),
-  WEBHOOK_PORT: z.string().transform(Number).default("3000"),
   HEALTH_PORT: z
     .union([z.string(), z.number()])
     .optional()
@@ -120,7 +119,6 @@ export function env(): Env {
         BRIEFING_TIME: "07:00",
         WEBHOOK_URL: undefined,
         TELEGRAM_WEBHOOK_SECRET: "mock_telegram_webhook_secret_16chars",
-        WEBHOOK_PORT: 3000,
         HEALTH_PORT: 8080,
         NODE_ENV: "test",
       };

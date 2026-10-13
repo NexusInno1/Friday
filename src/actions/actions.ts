@@ -5,11 +5,49 @@ import type { Memory, Reminder } from "../db/schema.js";
 import { parseTimeString } from "../utils/time.js";
 import { Cron } from "croner";
 
-const EMBEDDING_MODEL = "gemini-embedding-001";
+import { generateText, type LanguageModel } from "ai";
+import { getModel } from "../services/model.service.js";
+
+export const EMBEDDING_MODEL = "text-embedding-004";
 const SUPERSEDE_THRESHOLD = 0.85;
 
 /**
- * Generates text embeddings using Google's gemini-embedding-001 model (768 dimensions).
+ * Verifies whether a new memory fact contradicts, replaces, or invalidates an existing memory fact.
+ * Returns true if contradictory/superseding.
+ * Returns false if complementary, distinct, or on failure (safe retention).
+ */
+export async function checkMemoryContradiction(
+  existingFact: string,
+  newFact: string,
+  model?: LanguageModel
+): Promise<boolean> {
+  if (existingFact.trim().toLowerCase() === newFact.trim().toLowerCase()) {
+    return true;
+  }
+
+  try {
+    const activeModel = model ?? getModel();
+    const prompt = `Determine if the NEW statement contradicts, invalidates, or replaces the EXISTING statement.
+Existing: "${existingFact}"
+New: "${newFact}"
+
+Respond with CONTRADICT if the new statement replaces, invalidates, or directly conflicts with the existing statement (e.g. "User lives in New York" vs "User moved to London").
+Respond with COMPATIBLE if both statements can be simultaneously true or are complementary preferences/details (e.g. "User likes coffee" and "User likes tea").
+Respond with ONLY: CONTRADICT or COMPATIBLE.`;
+
+    const result = await generateText({
+      model: activeModel,
+      prompt,
+      maxSteps: 1,
+    });
+    return result.text.trim().toUpperCase().includes("CONTRADICT");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Generates text embeddings using Google's text-embedding-004 model (768 dimensions).
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   const { GEMINI_API_KEY } = env();
@@ -60,16 +98,19 @@ export async function rememberAction(
     console.warn("[actions:memory] Failed to generate embedding, storing without vector:", err);
   }
 
-  // Conflict detection and superseding (ADR-0004)
+  // Conflict detection and superseding (ADR-0004 + AUDIT-006)
   const supersededIds: string[] = [];
   if (embedding) {
     try {
-      const conflicts = await store.matchMemories(userId, embedding, SUPERSEDE_THRESHOLD, 3);
-      for (const conflict of conflicts) {
-        supersededIds.push(conflict.id);
+      const candidates = await store.matchMemories(userId, embedding, SUPERSEDE_THRESHOLD, 3);
+      for (const candidate of candidates) {
+        const isContradiction = await checkMemoryContradiction(candidate.content, trimmed);
+        if (isContradiction) {
+          supersededIds.push(candidate.id);
+        }
       }
       if (supersededIds.length > 0) {
-        console.log(`[actions:memory] Superseding ${supersededIds.length} conflicting memory(ies)`);
+        console.log(`[actions:memory] Verified contradiction; superseding ${supersededIds.length} conflicting memory(ies)`);
       }
     } catch (err) {
       console.warn("[actions:memory] Conflict detection failed, proceeding with insert:", err);

@@ -38,6 +38,92 @@ describe("InMemoryDataStore", () => {
     expect(msgs).toEqual([]);
   });
 
+  it("preserves historical conversation messages when clearing active conversation", async () => {
+    // Simulate an older conversation from 3 days ago
+    const oldConvId = "old-conv-123";
+    const oldDate = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    store.conversations.set(oldConvId, {
+      id: oldConvId,
+      telegram_chat_id: 123,
+      created_at: oldDate,
+      updated_at: oldDate,
+    });
+    store.messages.set("old-msg-1", {
+      id: "old-msg-1",
+      conversation_id: oldConvId,
+      role: "user",
+      content: "Historical fact worth keeping",
+      tool_name: null,
+      tool_call_id: null,
+      tokens_used: null,
+      created_at: oldDate,
+    });
+
+    // Create current active conversation
+    const activeConvId = await store.getOrCreateConversation(123);
+    await store.saveMessage(activeConvId, "user", "Ephemeral query");
+
+    // Clear active conversation
+    await store.clearConversation(123);
+
+    // Active conversation is cleared
+    const activeMsgs = await store.getContextMessages(activeConvId);
+    expect(activeMsgs).toEqual([]);
+
+    // Historical conversation messages are preserved for compaction
+    const oldMsgs = await store.getConversationMessagesBefore(
+      oldConvId,
+      new Date().toISOString()
+    );
+    expect(oldMsgs.length).toBe(1);
+    expect(oldMsgs[0].content).toBe("Historical fact worth keeping");
+  });
+
+  it("bridges dialogue context across 24h inactivity window from prior conversation", async () => {
+    // Yesterday's conversation (26 hours ago)
+    const yesterdayConvId = "conv-yesterday";
+    const yesterdayDate = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+    store.conversations.set(yesterdayConvId, {
+      id: yesterdayConvId,
+      telegram_chat_id: 456,
+      created_at: yesterdayDate,
+      updated_at: yesterdayDate,
+    });
+    store.messages.set("msg-y1", {
+      id: "msg-y1",
+      conversation_id: yesterdayConvId,
+      role: "user",
+      content: "Let's work on project Apollo",
+      tool_name: null,
+      tool_call_id: null,
+      tokens_used: null,
+      created_at: yesterdayDate,
+    });
+    store.messages.set("msg-y2", {
+      id: "msg-y2",
+      conversation_id: yesterdayConvId,
+      role: "assistant",
+      content: "Understood, project Apollo initialized.",
+      tool_name: null,
+      tool_call_id: null,
+      tokens_used: null,
+      created_at: yesterdayDate,
+    });
+
+    // Today's interaction (> 24h later) creates a new conversation
+    const todayConvId = await store.getOrCreateConversation(456);
+    expect(todayConvId).not.toBe(yesterdayConvId);
+
+    await store.saveMessage(todayConvId, "user", "What was the project name again?");
+
+    // Context retrieval should bridge yesterday's messages in front of today's message
+    const msgs = await store.getContextMessages(todayConvId, 10);
+    expect(msgs.length).toBe(3);
+    expect(msgs[0]).toEqual({ role: "user", content: "Let's work on project Apollo" });
+    expect(msgs[1]).toEqual({ role: "assistant", content: "Understood, project Apollo initialized." });
+    expect(msgs[2]).toEqual({ role: "user", content: "What was the project name again?" });
+  });
+
   it("matches memories using cosine similarity", async () => {
     const embeddingA = [1, 0, 0];
     const embeddingB = [0.99, 0.01, 0];

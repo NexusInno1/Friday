@@ -193,8 +193,12 @@ async function fetchSingleQueryBullets(
         include_raw_content: false,
       }),
     });
-
-    if (!response.ok) return [];
+    if (!response.ok) {
+      console.warn(
+        `[scheduler:briefing] Tavily search responded with status ${response.status} ${response.statusText}`
+      );
+      return [];
+    }
 
     const data = (await response.json()) as {
       results?: Array<{ title?: string; url?: string }>;
@@ -204,7 +208,8 @@ async function fetchSingleQueryBullets(
       .filter((r) => r.title && !isLowQualityTitle(r.title))
       .slice(0, count)
       .map((r) => `  • ${r.title!.trim()}`);
-  } catch {
+  } catch (err) {
+    console.warn("[scheduler:briefing] Failed to fetch query bullets from Tavily:", err);
     return [];
   }
 }
@@ -275,6 +280,7 @@ export class ProactiveScheduler {
   private compactionCron: Cron | null = null;
   private briefingCron: Cron | null = null;
   private currentBriefingTime: string = "07:00";
+  private isCheckingReminders = false;
 
   constructor(options: ProactiveSchedulerOptions = {}) {
     this.store = options.store ?? getDataStore();
@@ -313,71 +319,77 @@ export class ProactiveScheduler {
   }
 
   async checkDueReminders(): Promise<number> {
-    if (!this.dispatcher) return 0;
-    const now = new Date().toISOString();
-    const claimed = await this.store.claimDueReminders(now, 120_000);
+    if (!this.dispatcher || this.isCheckingReminders) return 0;
+    this.isCheckingReminders = true;
 
-    let processed = 0;
-    for (const reminder of claimed) {
-      try {
-        await this.dispatcher.sendMessage(
-          reminder.telegram_chat_id,
-          `⏰ **Reminder**\n\n${reminder.message}`,
-          {
-            buttons: [
-              { text: "⏰ +15m", data: `snooze:${reminder.id}:15` },
-              { text: "⏰ +1h", data: `snooze:${reminder.id}:60` },
-              { text: "❌ Cancel", data: `cancel:${reminder.id}` },
-            ],
-          }
-        );
+    try {
+      const now = new Date().toISOString();
+      const claimed = await this.store.claimDueReminders(now, 120_000);
 
-        if (reminder.is_recurring && reminder.cron_expression) {
-          const nextRun = new Cron(reminder.cron_expression, {
-            timezone: env().USER_TIMEZONE,
-          }).nextRun();
+      let processed = 0;
+      for (const reminder of claimed) {
+        try {
+          await this.dispatcher.sendMessage(
+            reminder.telegram_chat_id,
+            `⏰ **Reminder**\n\n${reminder.message}`,
+            {
+              buttons: [
+                { text: "⏰ +15m", data: `snooze:${reminder.id}:15` },
+                { text: "⏰ +1h", data: `snooze:${reminder.id}:60` },
+                { text: "❌ Cancel", data: `cancel:${reminder.id}` },
+              ],
+            }
+          );
 
-          if (nextRun) {
-            await this.store.updateReminder(reminder.id, {
-              trigger_at: nextRun.toISOString(),
-              lease_until: null,
-            });
+          if (reminder.is_recurring && reminder.cron_expression) {
+            const nextRun = new Cron(reminder.cron_expression, {
+              timezone: env().USER_TIMEZONE,
+            }).nextRun();
+
+            if (nextRun) {
+              await this.store.updateReminder(reminder.id, {
+                trigger_at: nextRun.toISOString(),
+                lease_until: null,
+              });
+            } else {
+              await this.store.updateReminder(reminder.id, {
+                is_completed: true,
+                lease_until: null,
+              });
+            }
           } else {
             await this.store.updateReminder(reminder.id, {
               is_completed: true,
               lease_until: null,
             });
           }
-        } else {
-          await this.store.updateReminder(reminder.id, {
-            is_completed: true,
-            lease_until: null,
-          });
-        }
-        processed++;
-      } catch (err) {
-        console.error("[scheduler] Failed to deliver reminder:", reminder.id, err);
-        const attempts = reminder.delivery_attempts ?? 1;
-        if (attempts >= MAX_DELIVERY_ATTEMPTS) {
-          console.warn(
-            `[scheduler] Reminder ${reminder.id} exceeded maximum delivery attempts (${MAX_DELIVERY_ATTEMPTS}). Marking as cancelled.`
-          );
-          try {
-            await this.store.updateReminder(reminder.id, {
-              is_cancelled: true,
-              lease_until: null,
-            });
-          } catch (cancelErr) {
-            console.error(
-              `[scheduler] Failed to cancel permanently failing reminder ${reminder.id}:`,
-              cancelErr
+          processed++;
+        } catch (err) {
+          console.error("[scheduler] Failed to deliver reminder:", reminder.id, err);
+          const attempts = reminder.delivery_attempts ?? 1;
+          if (attempts >= MAX_DELIVERY_ATTEMPTS) {
+            console.warn(
+              `[scheduler] Reminder ${reminder.id} exceeded maximum delivery attempts (${MAX_DELIVERY_ATTEMPTS}). Marking as cancelled.`
             );
+            try {
+              await this.store.updateReminder(reminder.id, {
+                is_cancelled: true,
+                lease_until: null,
+              });
+            } catch (cancelErr) {
+              console.error(
+                `[scheduler] Failed to cancel permanently failing reminder ${reminder.id}:`,
+                cancelErr
+              );
+            }
           }
+          // Otherwise: keep lease_until intact so it will retry after lease expires
         }
-        // Otherwise: keep lease_until intact so it will retry after lease expires
       }
+      return processed;
+    } finally {
+      this.isCheckingReminders = false;
     }
-    return processed;
   }
 
   async sendDailyBriefing(): Promise<void> {
