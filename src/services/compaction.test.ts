@@ -196,4 +196,85 @@ describe("runFactCompaction safety & bounds", () => {
     expect(result.messagesDeleted).toBe(0);
     expect(store.messages.size).toBe(10);
   });
+
+  it("processes multiple distinct old conversations without starving behind the first one", async () => {
+    const { InMemoryDataStore } = await import("../db/in-memory-datastore.js");
+    const { runFactCompaction } = await import("./compaction.service.js");
+    const store = new InMemoryDataStore();
+    const convA = "conv-A";
+    const convB = "conv-B";
+
+    const baseTime = Date.now() - 35 * 24 * 60 * 60 * 1000;
+    // Conv A has 60 old messages
+    for (let i = 0; i < 60; i++) {
+      const id = `a-${i}`;
+      store.messages.set(id, {
+        id,
+        conversation_id: convA,
+        role: "user",
+        content: `Msg A ${i}`,
+        tool_name: null,
+        tool_call_id: null,
+        tokens_used: null,
+        created_at: new Date(baseTime + i * 1000).toISOString(),
+      });
+    }
+
+    // Conv B has 20 old messages
+    for (let i = 0; i < 20; i++) {
+      const id = `b-${i}`;
+      store.messages.set(id, {
+        id,
+        conversation_id: convB,
+        role: "user",
+        content: `Msg B ${i}`,
+        tool_name: null,
+        tool_call_id: null,
+        tokens_used: null,
+        created_at: new Date(baseTime + (60 + i) * 1000).toISOString(),
+      });
+    }
+
+    const mockExtractor = async (msgs: Array<{ id: string; role: string; content: string; created_at: string }>) => ({
+      success: true,
+      facts: [{ content: `Fact from batch of ${msgs.length}`, importance: 3, tags: [] }],
+    });
+
+    const result = await runFactCompaction(store, mockExtractor);
+
+    expect(result.conversationsProcessed).toBe(2);
+    expect(result.messagesDeleted).toBe(70);
+  });
+
+  it("quarantines a conversation after 3 consecutive failures to unblock others", async () => {
+    const { InMemoryDataStore } = await import("../db/in-memory-datastore.js");
+    const { runFactCompaction, resetCompactionQuarantine } = await import("./compaction.service.js");
+    resetCompactionQuarantine();
+
+    const store = new InMemoryDataStore();
+    const poisonConv = "conv-poison";
+    const baseTime = Date.now() - 35 * 24 * 60 * 60 * 1000;
+
+    store.messages.set("poison-msg", {
+      id: "poison-msg",
+      conversation_id: poisonConv,
+      role: "user",
+      content: "Poison message",
+      tool_name: null,
+      tool_call_id: null,
+      tokens_used: null,
+      created_at: new Date(baseTime).toISOString(),
+    });
+
+    const mockExtractor = async () => ({ success: false, facts: [] });
+
+    // Run 1, 2, 3: Poison fails
+    await runFactCompaction(store, mockExtractor);
+    await runFactCompaction(store, mockExtractor);
+    await runFactCompaction(store, mockExtractor);
+
+    // Run 4: Poison is quarantined and skipped
+    const run4 = await runFactCompaction(store, mockExtractor);
+    expect(run4.conversationsProcessed).toBe(0);
+  });
 });

@@ -33,6 +33,7 @@ export class InMemoryDataStore implements DataStore {
   memories: Map<string, Memory> = new Map();
   reminders: Map<string, Reminder> = new Map();
   userProfiles: Map<number, UserProfile> = new Map();
+  lastClearedAt: Map<number, number> = new Map();
   activityLogs: Array<{
     id: string;
     user_id: number | null;
@@ -98,26 +99,69 @@ export class InMemoryDataStore implements DataStore {
     conversationId: string,
     limit = 20
   ): Promise<Array<{ role: MessageRole; content: string }>> {
+    const currentConv = this.conversations.get(conversationId);
     const relevant = Array.from(this.messages.values())
       .filter((m) => m.conversation_id === conversationId)
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+    // Bridge prior conversation if active session has fewer than limit messages
+    if (relevant.length < limit && currentConv) {
+      const chatId = currentConv.telegram_chat_id;
+      const clearedTime = this.lastClearedAt.get(chatId) ?? 0;
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+      const priorConvs = Array.from(this.conversations.values())
+        .filter(
+          (c) =>
+            c.telegram_chat_id === chatId &&
+            c.id !== conversationId &&
+            new Date(c.updated_at).getTime() > sevenDaysAgo &&
+            new Date(c.updated_at).getTime() <= new Date(currentConv.created_at).getTime()
+        )
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+
+      if (priorConvs.length > 0) {
+        const priorConvId = priorConvs[0].id;
+        const needed = limit - relevant.length;
+        const priorMessages = Array.from(this.messages.values())
+          .filter(
+            (m) =>
+              m.conversation_id === priorConvId &&
+              new Date(m.created_at).getTime() > clearedTime
+          )
+          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+          .slice(-needed);
+
+        relevant.unshift(...priorMessages);
+      }
+    }
 
     return relevant.slice(-limit).map((m) => ({ role: m.role, content: m.content }));
   }
 
   async clearConversation(chatId: number, userId?: number): Promise<void> {
-    const convIdsToDelete = new Set<string>();
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    let activeConvId: string | null = null;
+    let latestUpdatedAt = "";
+
     for (const conv of this.conversations.values()) {
-      if (conv.telegram_chat_id === chatId) {
-        convIdsToDelete.add(conv.id);
+      if (conv.telegram_chat_id === chatId && conv.updated_at >= cutoff) {
+        if (!latestUpdatedAt || conv.updated_at > latestUpdatedAt) {
+          latestUpdatedAt = conv.updated_at;
+          activeConvId = conv.id;
+        }
       }
     }
 
+    if (!activeConvId) return;
+
     for (const [id, msg] of this.messages.entries()) {
-      if (convIdsToDelete.has(msg.conversation_id)) {
+      if (msg.conversation_id === activeConvId) {
         this.messages.delete(id);
       }
     }
+
+    this.lastClearedAt.set(chatId, Date.now());
 
     if (userId) {
       await this.logActivity(userId, "conversation_cleared", { chat_id: chatId });
@@ -129,11 +173,15 @@ export class InMemoryDataStore implements DataStore {
     limit = 100
   ): Promise<Array<{ conversation_id: string }>> {
     const cutoffTime = new Date(cutoffDateIso).getTime();
+    const seen = new Set<string>();
     const result: Array<{ conversation_id: string }> = [];
     for (const msg of this.messages.values()) {
       if (new Date(msg.created_at).getTime() < cutoffTime) {
-        result.push({ conversation_id: msg.conversation_id });
-        if (result.length >= limit) break;
+        if (!seen.has(msg.conversation_id)) {
+          seen.add(msg.conversation_id);
+          result.push({ conversation_id: msg.conversation_id });
+          if (result.length >= limit) break;
+        }
       }
     }
     return result;

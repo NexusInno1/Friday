@@ -79,6 +79,11 @@ async function main() {
     console.log(`✅ Webhook set to: ${envConfig.WEBHOOK_URL}${webhookPath}`);
   } else {
     console.log("⚡ Starting FRIDAY in Long Polling mode (dev / standalone)...");
+    try {
+      await bot.api.deleteWebhook({ drop_pending_updates: false });
+    } catch (err) {
+      console.warn("⚠️ Could not clear existing webhook before polling:", err);
+    }
     await bot.start({
       allowed_updates: ["message", "callback_query"],
       onStart: (botInfo) => {

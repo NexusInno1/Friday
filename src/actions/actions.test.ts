@@ -6,13 +6,22 @@ import {
   snoozeReminderAction,
   cancelReminderAction,
   updateBriefingTimeAction,
+  checkMemoryContradiction,
+  EMBEDDING_MODEL,
 } from "./actions.js";
+import type { LanguageModelV1 } from "@ai-sdk/provider";
 
 describe("Core Actions", () => {
   let store: InMemoryDataStore;
 
   beforeEach(() => {
     store = new InMemoryDataStore();
+  });
+
+  describe("Embedding Configuration", () => {
+    it("uses the supported text-embedding-004 model", () => {
+      expect(EMBEDDING_MODEL).toBe("text-embedding-004");
+    });
   });
 
   describe("computeSnoozedTime", () => {
@@ -118,6 +127,92 @@ describe("Core Actions", () => {
 
       const profile = await store.getUserProfile(100);
       expect(profile?.briefing_time).toBe("08:30");
+    });
+  });
+
+  describe("checkMemoryContradiction", () => {
+    it("returns true immediately if statements are identical", async () => {
+      const isContradict = await checkMemoryContradiction(
+        "User lives in Berlin",
+        "User lives in Berlin"
+      );
+      expect(isContradict).toBe(true);
+    });
+
+    it("returns true when model classifies statements as CONTRADICT", async () => {
+      const mockModel: LanguageModelV1 = {
+        specificationVersion: "v1",
+        modelId: "mock-model",
+        provider: "mock",
+        defaultObjectGenerationMode: "json",
+        async doGenerate() {
+          return {
+            text: "CONTRADICT",
+            finishReason: "stop",
+            usage: { promptTokens: 10, completionTokens: 5 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        },
+        async doStream() {
+          throw new Error("Not implemented");
+        },
+      };
+
+      const result = await checkMemoryContradiction(
+        "User lives in New York",
+        "User moved to London",
+        mockModel as any
+      );
+      expect(result).toBe(true);
+    });
+
+    it("returns false when model classifies statements as COMPATIBLE", async () => {
+      const mockModel: LanguageModelV1 = {
+        specificationVersion: "v1",
+        modelId: "mock-model",
+        provider: "mock",
+        defaultObjectGenerationMode: "json",
+        async doGenerate() {
+          return {
+            text: "COMPATIBLE",
+            finishReason: "stop",
+            usage: { promptTokens: 10, completionTokens: 5 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        },
+        async doStream() {
+          throw new Error("Not implemented");
+        },
+      };
+
+      const result = await checkMemoryContradiction(
+        "User likes coffee",
+        "User likes tea",
+        mockModel as any
+      );
+      expect(result).toBe(false);
+    });
+
+    it("fails safely and returns false if model throws an error", async () => {
+      const mockModel: LanguageModelV1 = {
+        specificationVersion: "v1",
+        modelId: "mock-model",
+        provider: "mock",
+        defaultObjectGenerationMode: "json",
+        async doGenerate() {
+          throw new Error("API rate limit exceeded");
+        },
+        async doStream() {
+          throw new Error("Not implemented");
+        },
+      };
+
+      const result = await checkMemoryContradiction(
+        "User prefers dark mode",
+        "User switched to light theme",
+        mockModel as any
+      );
+      expect(result).toBe(false);
     });
   });
 });

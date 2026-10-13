@@ -140,4 +140,31 @@ describe("ProactiveScheduler", () => {
     expect(updated?.lease_until).toBeNull();
     expect(updated?.delivery_attempts).toBe(5);
   });
+
+  it("prevents overlapping concurrent checkDueReminders executions with mutex lock", async () => {
+    const pastTime = new Date(Date.now() - 10000).toISOString();
+    await store.createReminder({
+      userId: 12345,
+      chatId: 12345,
+      message: "Concurrent test",
+      triggerAt: pastTime,
+    });
+
+    let resolveSendMessage: (() => void) | null = null;
+    const sendMessagePromise = new Promise<void>((resolve) => {
+      resolveSendMessage = resolve;
+    });
+
+    dispatcher.sendMessage = async () => {
+      await sendMessagePromise;
+    };
+
+    const firstCallPromise = scheduler.checkDueReminders();
+    const secondCallCount = await scheduler.checkDueReminders();
+    expect(secondCallCount).toBe(0);
+
+    resolveSendMessage!();
+    const firstCallCount = await firstCallPromise;
+    expect(firstCallCount).toBe(1);
+  });
 });

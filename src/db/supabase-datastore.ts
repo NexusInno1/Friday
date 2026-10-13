@@ -62,6 +62,7 @@ export class SupabaseDataStore implements DataStore {
 
     if (error) {
       console.error("[supabase-store] Failed to save message:", error.message);
+      throw new Error(`Failed to save message: ${error.message}`);
     }
 
     await this.db
@@ -86,14 +87,77 @@ export class SupabaseDataStore implements DataStore {
       return [];
     }
 
-    return (data ?? []).reverse();
+    const currentMessages = (data ?? []).reverse();
+    if (currentMessages.length >= limit) {
+      return currentMessages;
+    }
+
+    // Bridge prior conversation if active session has fewer than limit messages
+    try {
+      const { data: conv } = await this.db
+        .from("conversations")
+        .select("telegram_chat_id, created_at")
+        .eq("id", conversationId)
+        .maybeSingle();
+
+      if (conv) {
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        const { data: priorConv } = await this.db
+          .from("conversations")
+          .select("id")
+          .eq("telegram_chat_id", conv.telegram_chat_id)
+          .neq("id", conversationId)
+          .gte("updated_at", sevenDaysAgo)
+          .lte("created_at", conv.created_at)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (priorConv) {
+          const needed = limit - currentMessages.length;
+          const { data: lastClear } = await this.db
+            .from("activity_logs")
+            .select("created_at")
+            .eq("event_type", "conversation_cleared")
+            .contains("payload", { chat_id: conv.telegram_chat_id })
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          let query = this.db
+            .from("messages")
+            .select("role, content")
+            .eq("conversation_id", priorConv.id);
+
+          if (lastClear?.created_at) {
+            query = query.gt("created_at", lastClear.created_at);
+          }
+
+          const { data: priorData } = await query
+            .order("created_at", { ascending: false })
+            .limit(needed);
+
+          if (priorData && priorData.length > 0) {
+            return [...priorData.reverse(), ...currentMessages];
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[supabase-store] Failed to bridge previous conversation context:", err);
+    }
+
+    return currentMessages;
   }
 
   async clearConversation(chatId: number, userId?: number): Promise<void> {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: convs } = await this.db
       .from("conversations")
       .select("id")
-      .eq("telegram_chat_id", chatId);
+      .eq("telegram_chat_id", chatId)
+      .gte("updated_at", cutoff)
+      .order("updated_at", { ascending: false })
+      .limit(1);
 
     if (!convs?.length) return;
 
@@ -114,13 +178,24 @@ export class SupabaseDataStore implements DataStore {
       .from("messages")
       .select("conversation_id")
       .lt("created_at", cutoffDateIso)
-      .limit(limit);
+      .order("created_at", { ascending: true })
+      .limit(limit * 10);
 
     if (error) {
       console.error("[supabase-store] Failed to get old messages:", error.message);
       return [];
     }
-    return data ?? [];
+
+    const seen = new Set<string>();
+    const unique: Array<{ conversation_id: string }> = [];
+    for (const row of data ?? []) {
+      if (!seen.has(row.conversation_id)) {
+        seen.add(row.conversation_id);
+        unique.push(row);
+        if (unique.length >= limit) break;
+      }
+    }
+    return unique;
   }
 
   async getConversationMessagesBefore(
