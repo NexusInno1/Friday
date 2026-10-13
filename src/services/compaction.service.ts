@@ -1,6 +1,6 @@
 import { getDataStore } from "../db/datastore-provider.js";
 import { rememberAction } from "../actions/actions.js";
-import { getModel } from "./agent.service.js";
+import { getModel } from "./model.service.js";
 import { generateText } from "ai";
 import type { DataStore } from "../db/datastore.js";
 
@@ -15,6 +15,13 @@ import type { DataStore } from "../db/datastore.js";
 
 const RETENTION_DAYS = 30;
 const COMPACTION_BATCH_SIZE = 50;
+const MAX_EXTRACTION_FAILURES = 3;
+const conversationFailureCounts = new Map<string, number>();
+
+/** For testing or resetting quarantine state */
+export function resetCompactionQuarantine(): void {
+  conversationFailureCounts.clear();
+}
 
 const EXTRACTION_PROMPT = `You are a fact extraction engine. Given a batch of conversation messages between a user and their AI assistant, extract any durable personal facts, preferences, decisions, or important information worth remembering long-term.
 
@@ -59,6 +66,14 @@ export async function runFactCompaction(
   ];
 
   for (const conversationId of uniqueConvIds) {
+    const failureCount = conversationFailureCounts.get(conversationId) ?? 0;
+    if (failureCount >= MAX_EXTRACTION_FAILURES) {
+      console.warn(
+        `[compaction] Skipping conversation ${conversationId}: quarantined after ${failureCount} extraction failures.`
+      );
+      continue;
+    }
+
     try {
       const oldMessages = await store.getConversationMessagesBefore(
         conversationId,
@@ -71,8 +86,10 @@ export async function runFactCompaction(
       const extraction = await extractor(oldMessages);
 
       if (!extraction.success) {
+        const nextFailures = (conversationFailureCounts.get(conversationId) ?? 0) + 1;
+        conversationFailureCounts.set(conversationId, nextFailures);
         console.error(
-          `[compaction] Skipping message deletion for conversation ${conversationId} due to extraction failure.`
+          `[compaction] Skipping message deletion for conversation ${conversationId} due to extraction failure (attempt ${nextFailures}/${MAX_EXTRACTION_FAILURES}).`
         );
         continue;
       }
@@ -97,8 +114,10 @@ export async function runFactCompaction(
       // retried while the source remains available (later deduplication/provenance
       // can make successful partial writes idempotent).
       if (!allFactsStored) {
+        const nextFailures = (conversationFailureCounts.get(conversationId) ?? 0) + 1;
+        conversationFailureCounts.set(conversationId, nextFailures);
         console.error(
-          `[compaction] Retaining messages for conversation ${conversationId} because one or more facts could not be stored.`
+          `[compaction] Retaining messages for conversation ${conversationId} because one or more facts could not be stored (attempt ${nextFailures}/${MAX_EXTRACTION_FAILURES}).`
         );
         continue;
       }
@@ -108,6 +127,9 @@ export async function runFactCompaction(
       const deletedCount = await store.deleteMessagesByIds(extractedMessageIds);
       totalDeleted += deletedCount;
       conversationsProcessed++;
+
+      // Successfully processed: clear failure count
+      conversationFailureCounts.delete(conversationId);
     } catch (err) {
       console.error(`[compaction] Error processing conversation ${conversationId}:`, err);
     }
