@@ -14,6 +14,7 @@ Simply send any natural language message:
 • \`/briefing [HH:MM]\` — View or customize daily morning briefing time
 • \`/reminders\` — List all active reminders with Snooze / Cancel buttons
 • \`/remember <note>\` — Explicitly store a memory or fact
+• \`/memories [query]\` — View, search, and manage stored memories
 • \`/search <query>\` — Instant web search with citations
 • \`/clear\` — Clear current conversation context window
 • \`/status\` — View model, provider, timezone, and memory stats

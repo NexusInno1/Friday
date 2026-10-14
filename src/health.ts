@@ -1,16 +1,17 @@
 import express from "express";
 import { env } from "./config/env.js";
+import { getDataStore } from "./db/datastore-provider.js";
+import type { DataStore } from "./db/datastore.js";
 
 /**
- * Starts a lightweight HTTP server for Railway / cloud health checks.
- * Returns 200 OK on GET /health.
+ * Creates the Express app with liveness and readiness endpoints.
+ * @param store Optional DataStore instance for dependency injection in tests.
  */
-export function startHealthServer(): express.Express {
+export function createHealthApp(store?: DataStore): express.Express {
   const app = express();
-  const { HEALTH_PORT } = env();
-
   app.use(express.json());
 
+  // Fast liveness probe (200 OK)
   app.get("/health", (_req, res) => {
     res.status(200).json({
       status: "healthy",
@@ -20,12 +21,46 @@ export function startHealthServer(): express.Express {
     });
   });
 
+  // Deep readiness probe verifying database connectivity
+  app.get("/health/ready", async (_req, res) => {
+    try {
+      const activeStore = store ?? getDataStore();
+      await activeStore.getMemoryCount();
+      res.status(200).json({
+        status: "ready",
+        service: "friday-ai-assistant",
+        database: "connected",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+      });
+    } catch (err) {
+      res.status(503).json({
+        status: "unhealthy",
+        service: "friday-ai-assistant",
+        database: "disconnected",
+        error: err instanceof Error ? err.message : "Database check failed",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+      });
+    }
+  });
+
   app.get("/", (_req, res) => {
     res.status(200).send("FRIDAY AI Assistant is running.");
   });
 
-  app.listen(HEALTH_PORT, () => {
-    console.log(`🩺 Health check server listening on port ${HEALTH_PORT}`);
+  return app;
+}
+
+/**
+ * Starts the HTTP server for Railway / cloud health checks.
+ */
+export function startHealthServer(options?: { store?: DataStore; port?: number }): express.Express {
+  const app = createHealthApp(options?.store);
+  const port = options?.port ?? env().HEALTH_PORT;
+
+  app.listen(port, () => {
+    console.log(`🩺 Health check server listening on port ${port}`);
   });
 
   return app;

@@ -446,32 +446,30 @@ export class SupabaseDataStore implements DataStore {
       return [];
     }
 
-    const claimed: Reminder[] = [];
-    for (const reminder of candidates) {
-      let updateQuery = this.db
-        .from("reminders")
-        .update({
-          lease_until: leaseUntilIso,
-          delivery_attempts: (reminder.delivery_attempts ?? 0) + 1,
-        })
-        .eq("id", reminder.id)
-        .eq("is_completed", false)
-        .eq("is_cancelled", false);
+    const results = await Promise.all(
+      candidates.map(async (reminder) => {
+        let updateQuery = this.db
+          .from("reminders")
+          .update({
+            lease_until: leaseUntilIso,
+            delivery_attempts: (reminder.delivery_attempts ?? 0) + 1,
+          })
+          .eq("id", reminder.id)
+          .eq("is_completed", false)
+          .eq("is_cancelled", false);
 
-      if (reminder.lease_until === null) {
-        updateQuery = updateQuery.is("lease_until", null);
-      } else {
-        updateQuery = updateQuery.eq("lease_until", reminder.lease_until);
-      }
+        if (reminder.lease_until === null) {
+          updateQuery = updateQuery.is("lease_until", null);
+        } else {
+          updateQuery = updateQuery.eq("lease_until", reminder.lease_until);
+        }
 
-      const { data: updated, error: updateError } = await updateQuery.select().maybeSingle();
+        const { data: updated, error: updateError } = await updateQuery.select().maybeSingle();
+        return !updateError && updated ? (updated as Reminder) : null;
+      })
+    );
 
-      if (!updateError && updated) {
-        claimed.push(updated);
-      }
-    }
-
-    return claimed;
+    return results.filter((r): r is Reminder => r !== null);
   }
 
   async getReminder(id: string, userId: number): Promise<Reminder | null> {

@@ -105,4 +105,57 @@ describe("AssistantEngine", () => {
     expect(reply).toBe("Instructions applied.");
     expect(capturedPrompt).toContain("Speak like a Victorian gentleman.");
   });
+
+  it("executes multi-step tool call and stores resulting state", async () => {
+    let callCount = 0;
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "mock-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            text: "",
+            toolCalls: [
+              {
+                toolCallType: "function",
+                toolCallId: "call-1",
+                toolName: "store_memory",
+                args: JSON.stringify({
+                  content: "User prefers dark roast coffee",
+                  tags: ["preference"],
+                  importance: 4,
+                }),
+              },
+            ],
+            finishReason: "tool-calls",
+            usage: { promptTokens: 10, completionTokens: 10 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        }
+        return {
+          text: "I have recorded that you prefer dark roast coffee, Boss.",
+          finishReason: "stop",
+          usage: { promptTokens: 15, completionTokens: 10 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      async doStream() {
+        throw new Error("Not implemented");
+      },
+    };
+
+    const engine = new AssistantEngine({ store, model: mockModel as any });
+    const reply = await engine.reply(12345, "Remember that I prefer dark roast coffee");
+
+    expect(reply).toBe("I have recorded that you prefer dark roast coffee, Boss.");
+    expect(callCount).toBe(2);
+
+    const { env } = await import("../config/env.js");
+    const memories = await store.listMemories(env().TELEGRAM_ALLOWED_USER_ID);
+    expect(memories.length).toBe(1);
+    expect(memories[0].content).toBe("User prefers dark roast coffee");
+  });
 });
