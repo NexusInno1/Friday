@@ -7,12 +7,14 @@ import { handleStart } from "./commands/start.js";
 import { handleHelp } from "./commands/help.js";
 import { handleReminders } from "./commands/reminders.js";
 import { handleRemember } from "./commands/remember.js";
+import { handleMemories } from "./commands/memories.js";
 import { handleSearch } from "./commands/search.js";
 import { handleStatus } from "./commands/status.js";
 import { handleClear } from "./commands/clear.js";
 import { handleBriefing } from "./commands/briefing.js";
 import { getAssistantEngine, AssistantEngine } from "../services/agent.service.js";
 import { getScheduler, ProactiveScheduler } from "../services/scheduler.service.js";
+import { deleteMemory } from "../services/memory.service.js";
 import { chunkMessage } from "../utils/chunk.js";
 
 export interface BotFactoryOptions {
@@ -42,6 +44,7 @@ export function createBot(options: BotFactoryOptions = {}): Bot {
   bot.command("briefing", handleBriefing);
   bot.command("reminders", handleReminders);
   bot.command("remember", handleRemember);
+  bot.command("memories", handleMemories);
   bot.command("search", handleSearch);
   bot.command("status", handleStatus);
   bot.command("clear", handleClear);
@@ -95,6 +98,27 @@ export function createBot(options: BotFactoryOptions = {}): Bot {
     } catch (err) {
       console.error("[bot:cancel] Error cancelling reminder:", err);
       await ctx.answerCallbackQuery({ text: "Failed to cancel." });
+    }
+  });
+
+  // Callback query handler for interactive memory deletion
+  bot.callbackQuery(/^memory:delete:([a-f0-9-]+)$/i, async (ctx) => {
+    const memoryId = ctx.match[1];
+
+    try {
+      await deleteMemory(memoryId);
+
+      await ctx.answerCallbackQuery({ text: "Memory deleted." });
+      await ctx
+        .editMessageText("❌ **Memory deleted.**", {
+          parse_mode: "Markdown",
+        })
+        .catch(async () => {
+          await ctx.editMessageText("❌ Memory deleted.");
+        });
+    } catch (err) {
+      console.error("[bot:memory_delete] Error deleting memory:", err);
+      await ctx.answerCallbackQuery({ text: "Failed to delete memory." });
     }
   });
 

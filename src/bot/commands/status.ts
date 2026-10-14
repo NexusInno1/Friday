@@ -7,8 +7,20 @@ export async function handleStatus(ctx: Context): Promise<void> {
   const { DEFAULT_LLM_PROVIDER, GEMINI_MODEL, USER_TIMEZONE, USER_NAME, NODE_ENV } = env();
   const store = getDataStore();
 
-  const memoryCount = await store.getMemoryCount();
-  const reminderCount = await store.getActiveReminderCount();
+  let dbStatus = "🟢 Connected";
+  let overallStatus = "🟢 All Systems Operational";
+  let memoryCountStr = "N/A";
+  let reminderCountStr = "N/A";
+
+  try {
+    const memoryCount = await store.getMemoryCount();
+    const reminderCount = await store.getActiveReminderCount();
+    memoryCountStr = String(memoryCount);
+    reminderCountStr = String(reminderCount);
+  } catch (err) {
+    dbStatus = `🔴 Disconnected (${err instanceof Error ? err.message : "Error"})`;
+    overallStatus = "⚠️ Degraded (Database Unreachable)";
+  }
 
   const uptimeSeconds = Math.floor(process.uptime());
   const hours = Math.floor(uptimeSeconds / 3600);
@@ -19,15 +31,16 @@ export async function handleStatus(ctx: Context): Promise<void> {
 
   const statusText = `📊 **FRIDAY Telemetry & Status**
 
-• **Status**: 🟢 All Systems Operational
+• **Status**: ${overallStatus}
+• **Database**: ${dbStatus}
 • **AI Provider**: \`${DEFAULT_LLM_PROVIDER}\` (${modelLabel})
 • **Environment**: \`${NODE_ENV}\`
 • **User**: ${USER_NAME}
 • **Timezone**: \`${USER_TIMEZONE}\`
 • **Daily Briefing**: \`${briefingTime}\` (${USER_TIMEZONE})
 • **Uptime**: \`${hours}h ${minutes}m\`
-• **Stored Memories**: \`${memoryCount}\`
-• **Active Reminders**: \`${reminderCount}\`
+• **Stored Memories**: \`${memoryCountStr}\`
+• **Active Reminders**: \`${reminderCountStr}\`
 • **Node.js**: \`${process.version}\``;
 
   await ctx

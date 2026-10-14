@@ -18,6 +18,7 @@ Here is what I can do for you:
 • \`/briefing [HH:MM]\` — View or set morning briefing delivery time
 • \`/reminders\` — View and manage active reminders
 • \`/remember <fact>\` — Save a personal note or preference
+• \`/memories [query]\` — View, search, and delete stored memories
 • \`/search <query>\` — Perform instant live web search
 • \`/clear\` — Reset active conversation context
 • \`/status\` — View system telemetry and health
