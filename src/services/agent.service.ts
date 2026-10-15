@@ -1,23 +1,28 @@
 import { generateText, type LanguageModel } from "ai";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAI } from "@ai-sdk/openai";
-import { DEFAULT_GEMINI_MODEL, env } from "../config/env.js";
+import { env } from "../config/env.js";
 import { buildSystemPrompt } from "../config/persona.js";
-import type { DataStore } from "../db/datastore.js";
 import { getDataStore } from "../db/datastore-provider.js";
+import type { DataStore } from "../db/datastore.js";
 import { formatMemoryLines } from "./memory.service.js";
 import { recallMemoriesAction } from "../actions/actions.js";
 import { createTools } from "../tools/registry.js";
+import {
+  getModel,
+  resolveGeminiModel,
+  getFallbackChain,
+  isRetriableModelError,
+  type FallbackModelDescriptor,
+} from "./model.service.js";
 
-const DEFAULT_MAX_STEPS = 10;
 const DEFAULT_TIMEOUT_MS = 60_000;
-import { getModel, resolveGeminiModel } from "./model.service.js";
+const DEFAULT_MAX_STEPS = 10;
 
-export { getModel, resolveGeminiModel };
+export { getModel, resolveGeminiModel, getFallbackChain, isRetriableModelError, type FallbackModelDescriptor };
 
 export interface AssistantEngineOptions {
   store?: DataStore;
   model?: LanguageModel;
+  fallbacks?: FallbackModelDescriptor[];
   maxSteps?: number;
   timeoutMs?: number;
 }
@@ -30,17 +35,20 @@ export interface AssistantEngineOptions {
  * - Context window sliding and token accounting
  * - Semantic long-term memory grounding
  * - Multi-step tool execution loop with cancelable timeout
+ * - Outage resilience and tiered multi-model failover (Groq, OpenAI)
  * - Output formatting fallback guarantees
  */
 export class AssistantEngine {
   private store: DataStore;
   private model: LanguageModel;
+  private fallbacks: FallbackModelDescriptor[];
   private maxSteps: number;
   private timeoutMs: number;
 
   constructor(options: AssistantEngineOptions = {}) {
     this.store = options.store ?? getDataStore();
     this.model = options.model ?? getModel();
+    this.fallbacks = options.fallbacks ?? getFallbackChain();
     this.maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
@@ -107,36 +115,89 @@ export class AssistantEngine {
       store: this.store,
     });
 
-    // 7. Setup cancelable timeout controller
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => {
-      abortController.abort(new Error(`LLM response timed out after ${this.timeoutMs / 1000}s`));
-    }, this.timeoutMs);
+    // 7. Generation executor with cancelable timeout controller
+    const runGeneration = async (
+      modelToUse: LanguageModel
+    ): Promise<{ text: string; tokensUsed?: number }> => {
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => {
+        abortController.abort(new Error(`LLM response timed out after ${this.timeoutMs / 1000}s`));
+      }, this.timeoutMs);
+
+      try {
+        const result = await generateText({
+          model: modelToUse,
+          system: systemPrompt,
+          messages: [
+            ...messages,
+            { role: "user", content: `<user_message>\n${userMessage}\n</user_message>` },
+          ],
+          tools: scopedTools,
+          maxSteps: this.maxSteps,
+          abortSignal: abortController.signal,
+        });
+
+        return {
+          text: result.text.trim() || "✓ Done, Boss.",
+          tokensUsed: result.usage?.totalTokens,
+        };
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    let responseText = "";
+    let tokensUsed: number | undefined;
 
     try {
-      const result = await generateText({
-        model: this.model,
-        system: systemPrompt,
-        messages: [
-          ...messages,
-          { role: "user", content: `<user_message>\n${userMessage}\n</user_message>` },
-        ],
-        tools: scopedTools,
-        maxSteps: this.maxSteps,
-        abortSignal: abortController.signal,
-      });
+      const res = await runGeneration(this.model);
+      responseText = res.text;
+      tokensUsed = res.tokensUsed;
+    } catch (primaryErr) {
+      if (this.fallbacks.length > 0 && isRetriableModelError(primaryErr)) {
+        console.warn(
+          `[agent:failover] Primary model failed with retriable error: ${
+            primaryErr instanceof Error ? primaryErr.message : primaryErr
+          }. Attempting tiered failover...`
+        );
 
-      const responseText = result.text.trim() || "✓ Done, Boss.";
+        let failoverSucceeded = false;
+        let lastErr = primaryErr;
 
-      // 8. Persist assistant response with token metrics
-      await this.store.saveMessage(conversationId, "assistant", responseText, {
-        tokensUsed: result.usage?.totalTokens,
-      });
+        for (const fallback of this.fallbacks) {
+          try {
+            console.log(
+              `[agent:failover] Attempting failover to ${fallback.provider} (${fallback.modelName})...`
+            );
+            const res = await runGeneration(fallback.model);
+            responseText = `${res.text}\n\n_(⚡ Served via ${fallback.provider} fallback)_`;
+            tokensUsed = res.tokensUsed;
+            failoverSucceeded = true;
+            break;
+          } catch (fallbackErr) {
+            console.warn(
+              `[agent:failover] Fallback to ${fallback.provider} failed: ${
+                fallbackErr instanceof Error ? fallbackErr.message : fallbackErr
+              }`
+            );
+            lastErr = fallbackErr;
+          }
+        }
 
-      return responseText;
-    } finally {
-      clearTimeout(timeoutId);
+        if (!failoverSucceeded) {
+          throw lastErr;
+        }
+      } else {
+        throw primaryErr;
+      }
     }
+
+    // 8. Persist assistant response with token metrics
+    await this.store.saveMessage(conversationId, "assistant", responseText, {
+      tokensUsed,
+    });
+
+    return responseText;
   }
 }
 
@@ -147,15 +208,4 @@ export function getAssistantEngine(): AssistantEngine {
     _defaultEngine = new AssistantEngine();
   }
   return _defaultEngine;
-}
-
-export function setAssistantEngine(engine: AssistantEngine): void {
-  _defaultEngine = engine;
-}
-
-/**
- * Convenience entrypoint for running the default assistant engine.
- */
-export async function runAgent(chatId: number, userMessage: string): Promise<string> {
-  return getAssistantEngine().reply(chatId, userMessage);
 }

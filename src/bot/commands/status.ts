@@ -1,10 +1,19 @@
 import type { Context } from "grammy";
-import { DEFAULT_GEMINI_MODEL, env } from "../../config/env.js";
+import { DEFAULT_GEMINI_MODEL, DEFAULT_GROQ_MODEL, env } from "../../config/env.js";
 import { getDataStore } from "../../db/datastore-provider.js";
 import { getCurrentBriefingTime } from "../../services/scheduler.service.js";
 
 export async function handleStatus(ctx: Context): Promise<void> {
-  const { DEFAULT_LLM_PROVIDER, GEMINI_MODEL, USER_TIMEZONE, USER_NAME, NODE_ENV } = env();
+  const {
+    DEFAULT_LLM_PROVIDER,
+    GEMINI_MODEL,
+    GROQ_MODEL,
+    GROQ_API_KEY,
+    OPENAI_API_KEY,
+    USER_TIMEZONE,
+    USER_NAME,
+    NODE_ENV,
+  } = env();
   const store = getDataStore();
 
   let dbStatus = "🟢 Connected";
@@ -26,14 +35,23 @@ export async function handleStatus(ctx: Context): Promise<void> {
   const hours = Math.floor(uptimeSeconds / 3600);
   const minutes = Math.floor((uptimeSeconds % 3600) / 60);
 
-  const modelLabel = DEFAULT_LLM_PROVIDER === "openai" ? "gpt-4o" : (GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL);
+  const modelLabel =
+    DEFAULT_LLM_PROVIDER === "openai"
+      ? "gpt-4o"
+      : DEFAULT_LLM_PROVIDER === "groq"
+        ? (GROQ_MODEL ?? DEFAULT_GROQ_MODEL)
+        : (GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL);
   const briefingTime = getCurrentBriefingTime();
+
+  const groqStatus = GROQ_API_KEY ? "Ready" : "Not Configured";
+  const openaiStatus = OPENAI_API_KEY ? "Ready" : "Not Configured";
 
   const statusText = `📊 **FRIDAY Telemetry & Status**
 
 • **Status**: ${overallStatus}
 • **Database**: ${dbStatus}
 • **AI Provider**: \`${DEFAULT_LLM_PROVIDER}\` (${modelLabel})
+• **Fallbacks**: Groq (${groqStatus}), OpenAI (${openaiStatus})
 • **Environment**: \`${NODE_ENV}\`
 • **User**: ${USER_NAME}
 • **Timezone**: \`${USER_TIMEZONE}\`
