@@ -7,3 +7,12 @@ dist
 .github
 *.log
 npm-debug.log*
+coverage
+.vscode
+.idea
+docs
+brain
+scratch
+supabase
+*.md
+!README.md

@@ -155,4 +155,30 @@ describe("EnvSchema - TELEGRAM_WEBHOOK_SECRET and WEBHOOK_URL rules", () => {
     expect(loadedEnv.TELEGRAM_WEBHOOK_SECRET).toBeDefined();
     expect((loadedEnv.TELEGRAM_WEBHOOK_SECRET?.length ?? 0)).toBeGreaterThanOrEqual(16);
   });
+
+  it("defaults GROQ_MODEL to llama-3.3-70b-versatile and allows groq provider", () => {
+    const result = EnvSchema.safeParse({
+      ...baseValidEnv,
+      DEFAULT_LLM_PROVIDER: "groq",
+      GROQ_API_KEY: "gsk_mock_groq_key",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.DEFAULT_LLM_PROVIDER).toBe("groq");
+      expect(result.data.GROQ_API_KEY).toBe("gsk_mock_groq_key");
+      expect(result.data.GROQ_MODEL).toBe("llama-3.3-70b-versatile");
+    }
+  });
+
+  it("allows custom GROQ_MODEL configuration", () => {
+    const result = EnvSchema.safeParse({
+      ...baseValidEnv,
+      GROQ_API_KEY: "gsk_mock_groq_key",
+      GROQ_MODEL: "llama-3.1-8b-instant",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.GROQ_MODEL).toBe("llama-3.1-8b-instant");
+    }
+  });
 });

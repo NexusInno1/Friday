@@ -158,4 +158,178 @@ describe("AssistantEngine", () => {
     expect(memories.length).toBe(1);
     expect(memories[0].content).toBe("User prefers dark roast coffee");
   });
+
+  it("uses primary model when healthy and does not append fallback badge", async () => {
+    const mockPrimary: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "primary-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        return {
+          text: "Primary response",
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 5 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const mockFallback: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "fallback-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        return {
+          text: "Fallback response",
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 5 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const engine = new AssistantEngine({
+      store,
+      model: mockPrimary as any,
+      fallbacks: [{ provider: "Groq", modelName: "llama-3.3-70b-versatile", model: mockFallback as any }],
+    });
+
+    const reply = await engine.reply(12345, "Hello");
+    expect(reply).toBe("Primary response");
+    expect(reply).not.toContain("fallback");
+  });
+
+  it("fails over to Groq on primary retriable 503 error and appends badge", async () => {
+    const mockPrimary: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "primary-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        throw new Error("503 Service Unavailable: Gemini overloaded");
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const mockGroq: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "groq-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        return {
+          text: "Response generated via Groq",
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 5 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const engine = new AssistantEngine({
+      store,
+      model: mockPrimary as any,
+      fallbacks: [{ provider: "Groq", modelName: "llama-3.3-70b-versatile", model: mockGroq as any }],
+    });
+
+    const reply = await engine.reply(12345, "Hello after outage");
+    expect(reply).toBe("Response generated via Groq\n\n_(⚡ Served via Groq fallback)_");
+  });
+
+  it("executes multi-tier failover if both primary and first fallback fail", async () => {
+    const mockPrimary: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "primary-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        throw new Error("429 Too Many Requests");
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const mockGroq: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "groq-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        throw new Error("500 Groq cluster error");
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const mockOpenAI: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "openai-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        return {
+          text: "Response generated via OpenAI",
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 5 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const engine = new AssistantEngine({
+      store,
+      model: mockPrimary as any,
+      fallbacks: [
+        { provider: "Groq", modelName: "llama-3.3-70b-versatile", model: mockGroq as any },
+        { provider: "OpenAI", modelName: "gpt-4o", model: mockOpenAI as any },
+      ],
+    });
+
+    const reply = await engine.reply(12345, "Hello multi-tier");
+    expect(reply).toBe("Response generated via OpenAI\n\n_(⚡ Served via OpenAI fallback)_");
+  });
+
+  it("does not invoke fallbacks on non-retriable client errors", async () => {
+    const mockPrimary: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "primary-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        throw new Error("400 Bad Request: Invalid payload structure");
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    let fallbackCalled = false;
+    const mockGroq: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "groq-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        fallbackCalled = true;
+        return {
+          text: "Should not be called",
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 5 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const engine = new AssistantEngine({
+      store,
+      model: mockPrimary as any,
+      fallbacks: [{ provider: "Groq", modelName: "llama-3.3-70b-versatile", model: mockGroq as any }],
+    });
+
+    await expect(engine.reply(12345, "Bad request")).rejects.toThrow("400 Bad Request");
+    expect(fallbackCalled).toBe(false);
+  });
 });

@@ -2,6 +2,7 @@ import "dotenv/config";
 import { z } from "zod";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+export const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
 
 export const EnvSchema = z.object({
   // Telegram
@@ -12,9 +13,11 @@ export const EnvSchema = z.object({
     .transform(Number),
 
   // AI Provider
-  DEFAULT_LLM_PROVIDER: z.enum(["gemini", "openai"]).default("gemini"),
+  DEFAULT_LLM_PROVIDER: z.enum(["gemini", "openai", "groq"]).default("gemini"),
   GEMINI_API_KEY: z.string().min(1, "GEMINI_API_KEY is required"),
   GEMINI_MODEL: z.string().trim().min(1).default(DEFAULT_GEMINI_MODEL),
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_MODEL: z.string().trim().min(1).default(DEFAULT_GROQ_MODEL),
   OPENAI_API_KEY: z.string().optional(),
 
   // Tavily
@@ -111,6 +114,8 @@ export function env(): Env {
         GEMINI_API_KEY: "mock_gemini_key",
         GEMINI_MODEL: DEFAULT_GEMINI_MODEL,
         OPENAI_API_KEY: undefined,
+        GROQ_API_KEY: undefined,
+        GROQ_MODEL: DEFAULT_GROQ_MODEL,
         TAVILY_API_KEY: "mock_tavily_key",
         SUPABASE_URL: "https://mock.supabase.co",
         SUPABASE_SERVICE_ROLE_KEY: "mock_service_key",
