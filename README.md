@@ -94,7 +94,9 @@ Open Telegram, message your bot `/start`, and FRIDAY is live!
 | `/memories [query]` | View and manage stored long-term memories with delete buttons |
 | `/search <query>` | Instant web search with cited sources |
 | `/status` | View system telemetry, uptime, memory count, fallback readiness, and health |
-| `/clear` | Clear current conversation context window |
+| `/sessions` | View, manage, and switch between conversation threads |
+| `/history [query]` | Search past conversations, transcripts, and decisions |
+| `/clear` | Archive current session and start a fresh conversation thread |
 | `/help` | Detailed guide with examples |
 
 ---

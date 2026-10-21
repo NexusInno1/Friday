@@ -6,6 +6,8 @@ import type {
   UserProfile,
   MessageRole,
   Json,
+  ConversationSession,
+  HistorySearchResult,
 } from "./schema.js";
 
 export interface DataStore {
@@ -40,6 +42,23 @@ export interface DataStore {
     cutoffDateIso: string
   ): Promise<number>;
   deleteMessagesByIds(messageIds: string[]): Promise<number>;
+
+  // ─── Sessions & History Search ─────────────────────────
+  listSessions(chatId: number, limit?: number): Promise<ConversationSession[]>;
+  getActiveSession(chatId: number): Promise<ConversationSession | null>;
+  switchActiveSession(chatId: number, targetConversationId: string): Promise<ConversationSession>;
+  updateSessionTitle(conversationId: string, title: string): Promise<void>;
+  archiveSession(chatId: number): Promise<void>;
+  deleteSession(conversationId: string): Promise<void>;
+  getSessionMessages(
+    conversationId: string,
+    limit?: number
+  ): Promise<Array<{ id: string; role: MessageRole; content: string; created_at: string }>>;
+  searchMessageHistory(
+    chatId: number,
+    query: string,
+    options?: { limit?: number; conversationId?: string }
+  ): Promise<HistorySearchResult[]>;
 
   // ─── Long-Term Memories ────────────────────────────────
   storeMemory(

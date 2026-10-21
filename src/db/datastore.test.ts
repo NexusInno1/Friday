@@ -45,6 +45,9 @@ describe("InMemoryDataStore", () => {
     store.conversations.set(oldConvId, {
       id: oldConvId,
       telegram_chat_id: 123,
+      title: null,
+      summary: null,
+      is_active: false,
       created_at: oldDate,
       updated_at: oldDate,
     });
@@ -86,6 +89,9 @@ describe("InMemoryDataStore", () => {
     store.conversations.set(yesterdayConvId, {
       id: yesterdayConvId,
       telegram_chat_id: 456,
+      title: null,
+      summary: null,
+      is_active: true,
       created_at: yesterdayDate,
       updated_at: yesterdayDate,
     });
@@ -227,5 +233,124 @@ describe("InMemoryDataStore", () => {
     // Immediate second claim with active lease yields 0
     const secondClaim = await store.claimDueReminders(nowIso, 60_000);
     expect(secondClaim.length).toBe(0);
+  });
+
+  describe("Session Management & History Search", () => {
+    it("lists sessions and tracks active session", async () => {
+      const chatId = 777;
+      const convId1 = await store.getOrCreateConversation(chatId);
+      await store.saveMessage(convId1, "user", "Hello in session 1");
+      await store.saveMessage(convId1, "assistant", "Response in session 1");
+      await store.updateSessionTitle(convId1, "Docker Setup");
+
+      const activeSession = await store.getActiveSession(chatId);
+      expect(activeSession).not.toBeNull();
+      expect(activeSession?.id).toBe(convId1);
+      expect(activeSession?.title).toBe("Docker Setup");
+      expect(activeSession?.messageCount).toBe(2);
+
+      const sessions = await store.listSessions(chatId);
+      expect(sessions.length).toBe(1);
+      expect(sessions[0].title).toBe("Docker Setup");
+      expect(sessions[0].isActive).toBe(true);
+    });
+
+    it("archives current session and starts a new session", async () => {
+      const chatId = 888;
+      const convId1 = await store.getOrCreateConversation(chatId);
+      await store.saveMessage(convId1, "user", "Session 1 query");
+      await store.updateSessionTitle(convId1, "Session One");
+
+      // Archive session (as /clear would do)
+      await store.clearConversation(chatId);
+
+      // Next getOrCreateConversation starts a new active session
+      const convId2 = await store.getOrCreateConversation(chatId);
+      expect(convId2).not.toBe(convId1);
+
+      await store.saveMessage(convId2, "user", "Session 2 query");
+      await store.updateSessionTitle(convId2, "Session Two");
+
+      const sessions = await store.listSessions(chatId);
+      expect(sessions.length).toBe(2);
+
+      const active = await store.getActiveSession(chatId);
+      expect(active?.id).toBe(convId2);
+      expect(active?.title).toBe("Session Two");
+    });
+
+    it("switches active session back to a previous session", async () => {
+      const chatId = 999;
+      const conv1 = await store.getOrCreateConversation(chatId);
+      await store.saveMessage(conv1, "user", "Talking about Python");
+      await store.updateSessionTitle(conv1, "Python Project");
+
+      await store.clearConversation(chatId);
+
+      const conv2 = await store.getOrCreateConversation(chatId);
+      await store.saveMessage(conv2, "user", "Talking about Rust");
+      await store.updateSessionTitle(conv2, "Rust Project");
+
+      // Switch back to Python session
+      const switched = await store.switchActiveSession(chatId, conv1);
+      expect(switched.id).toBe(conv1);
+      expect(switched.title).toBe("Python Project");
+
+      const active = await store.getActiveSession(chatId);
+      expect(active?.id).toBe(conv1);
+
+      // Verify getOrCreateConversation returns conv1 now
+      const resumedConv = await store.getOrCreateConversation(chatId);
+      expect(resumedConv).toBe(conv1);
+    });
+
+    it("searches message history across sessions", async () => {
+      const chatId = 1000;
+      const conv1 = await store.getOrCreateConversation(chatId);
+      await store.saveMessage(conv1, "user", "What is the Railway deployment port?");
+      await store.saveMessage(conv1, "assistant", "Use port 8080 for Railway.");
+      await store.updateSessionTitle(conv1, "Railway Config");
+
+      await store.clearConversation(chatId);
+
+      const conv2 = await store.getOrCreateConversation(chatId);
+      await store.saveMessage(conv2, "user", "How do I setup PostgreSQL Supabase?");
+      await store.saveMessage(conv2, "assistant", "Use pgvector and Supabase CLI.");
+      await store.updateSessionTitle(conv2, "Supabase Setup");
+
+      // Search for "Railway"
+      const railwayResults = await store.searchMessageHistory(chatId, "Railway");
+      expect(railwayResults.length).toBe(2);
+      expect(railwayResults[0].sessionTitle).toBe("Railway Config");
+      expect(railwayResults.some((r) => r.content.includes("8080"))).toBe(true);
+
+      // Search for "pgvector"
+      const pgResults = await store.searchMessageHistory(chatId, "pgvector");
+      expect(pgResults.length).toBe(1);
+      expect(pgResults[0].sessionTitle).toBe("Supabase Setup");
+
+      // Scoped search to specific conversation
+      const scoped = await store.searchMessageHistory(chatId, "Railway", { conversationId: conv2 });
+      expect(scoped.length).toBe(0);
+    });
+
+    it("retrieves full session messages and deletes a session", async () => {
+      const chatId = 1001;
+      const convId = await store.getOrCreateConversation(chatId);
+      await store.saveMessage(convId, "user", "Step 1");
+      await store.saveMessage(convId, "assistant", "Step 2");
+
+      const msgs = await store.getSessionMessages(convId);
+      expect(msgs.length).toBe(2);
+      expect(msgs[0].content).toBe("Step 1");
+      expect(msgs[1].content).toBe("Step 2");
+
+      await store.deleteSession(convId);
+      const afterMsgs = await store.getSessionMessages(convId);
+      expect(afterMsgs.length).toBe(0);
+
+      const sessions = await store.listSessions(chatId);
+      expect(sessions.length).toBe(0);
+    });
   });
 });

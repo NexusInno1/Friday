@@ -47,3 +47,14 @@ export async function clearConversation(chatId: number): Promise<void> {
   const allowedOwnerId = env().TELEGRAM_ALLOWED_USER_ID;
   await store.clearConversation(chatId, allowedOwnerId);
 }
+
+export {
+  maybeAutoTitleSession,
+  listRecentSessions,
+  getActiveSession,
+  switchSession,
+  archiveActiveSession,
+  deleteSession,
+  searchChatHistory,
+} from "./session.service.js";
+

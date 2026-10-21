@@ -45,18 +45,27 @@ export interface Database {
         Row: {
           id: string;
           telegram_chat_id: number;
+          title: string | null;
+          summary: string | null;
+          is_active: boolean;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: string;
           telegram_chat_id: number;
+          title?: string | null;
+          summary?: string | null;
+          is_active?: boolean;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
           id?: string;
           telegram_chat_id?: number;
+          title?: string | null;
+          summary?: string | null;
+          is_active?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -240,3 +249,25 @@ export type Message = Database["public"]["Tables"]["messages"]["Row"];
 export type Memory = Database["public"]["Tables"]["memories"]["Row"];
 export type Reminder = Database["public"]["Tables"]["reminders"]["Row"];
 export type ActivityLog = Database["public"]["Tables"]["activity_logs"]["Row"];
+
+export interface ConversationSession {
+  id: string;
+  telegramChatId: number;
+  title: string | null;
+  summary: string | null;
+  isActive: boolean;
+  messageCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HistorySearchResult {
+  messageId: string;
+  conversationId: string;
+  sessionTitle: string | null;
+  role: Message["role"];
+  content: string;
+  createdAt: string;
+  similarity?: number;
+}
+

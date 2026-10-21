@@ -121,4 +121,41 @@ describe("Tool Registry - Scoping & Injection", () => {
     );
     expect(afterCancel.reminders.length).toBe(0);
   });
+
+  it("scopes search_conversation_history to targetChatId and returns matching excerpts", async () => {
+    const tools = createTools({
+      chatId: testChatId,
+      userId: testUserId,
+      store,
+    });
+
+    const convId = await store.getOrCreateConversation(testChatId);
+    await store.saveMessage(convId, "user", "How should we deploy on Railway?");
+    await store.saveMessage(convId, "assistant", "Use the Dockerfile with port 8080.");
+    await store.updateSessionTitle(convId, "Deployment Discussion");
+
+    const searchRes = await tools.search_conversation_history.execute(
+      { query: "Railway", limit: 5 },
+      { toolCallId: "test_call_9", messages: [] }
+    );
+
+    expect(searchRes.found).toBe(true);
+    expect(searchRes.matches.length).toBeGreaterThan(0);
+    expect(searchRes.matches[0].session_title).toBe("Deployment Discussion");
+    expect(searchRes.matches.some((m) => m.content.includes("Railway"))).toBe(true);
+
+    const dockerRes = await tools.search_conversation_history.execute(
+      { query: "Dockerfile", limit: 5 },
+      { toolCallId: "test_call_9b", messages: [] }
+    );
+    expect(dockerRes.found).toBe(true);
+    expect(dockerRes.matches.some((m) => m.content.includes("8080"))).toBe(true);
+
+    const emptyRes = await tools.search_conversation_history.execute(
+      { query: "nonexistent topic 12345", limit: 5 },
+      { toolCallId: "test_call_10", messages: [] }
+    );
+    expect(emptyRes.found).toBe(false);
+    expect(emptyRes.matches).toEqual([]);
+  });
 });

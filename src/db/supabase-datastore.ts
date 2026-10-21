@@ -1,5 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database, MessageRole, Memory, Reminder, UserProfile, Json } from "./schema.js";
+import type {
+  Database,
+  MessageRole,
+  Memory,
+  Reminder,
+  UserProfile,
+  Json,
+  ConversationSession,
+  HistorySearchResult,
+} from "./schema.js";
 import type { DataStore } from "./datastore.js";
 import { getSupabaseClient } from "./supabase.js";
 
@@ -13,11 +22,12 @@ export class SupabaseDataStore implements DataStore {
   // ─── Conversations & Messages ──────────────────────────
 
   async getOrCreateConversation(chatId: number): Promise<string> {
-    // Look for recent conversation (last 24h)
+    // Look for recent active conversation (last 24h)
     const { data: existing, error: findError } = await this.db
       .from("conversations")
       .select("id")
       .eq("telegram_chat_id", chatId)
+      .eq("is_active", true)
       .gte("updated_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
       .order("updated_at", { ascending: false })
       .limit(1)
@@ -31,7 +41,10 @@ export class SupabaseDataStore implements DataStore {
 
     const { data, error } = await this.db
       .from("conversations")
-      .insert({ telegram_chat_id: chatId })
+      .insert({
+        telegram_chat_id: chatId,
+        is_active: true,
+      })
       .select("id")
       .single();
 
@@ -150,24 +163,242 @@ export class SupabaseDataStore implements DataStore {
   }
 
   async clearConversation(chatId: number, userId?: number): Promise<void> {
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data: convs } = await this.db
+    const { error } = await this.db
       .from("conversations")
-      .select("id")
+      .update({ is_active: false })
       .eq("telegram_chat_id", chatId)
-      .gte("updated_at", cutoff)
-      .order("updated_at", { ascending: false })
-      .limit(1);
+      .eq("is_active", true);
 
-    if (!convs?.length) return;
-
-    for (const conv of convs) {
-      await this.db.from("messages").delete().eq("conversation_id", conv.id);
+    if (error) {
+      console.warn("[supabase-store] Error archiving active conversation on clear:", error.message);
     }
 
     if (userId) {
       await this.logActivity(userId, "conversation_cleared", { chat_id: chatId });
     }
+  }
+
+  // ─── Sessions & History Search ─────────────────────────
+
+  async listSessions(chatId: number, limit = 10): Promise<ConversationSession[]> {
+    const { data: convs, error } = await this.db
+      .from("conversations")
+      .select("id, telegram_chat_id, title, summary, is_active, created_at, updated_at")
+      .eq("telegram_chat_id", chatId)
+      .order("updated_at", { ascending: false })
+      .limit(limit);
+
+    if (error || !convs) {
+      console.error("[supabase-store] Failed to list sessions:", error?.message);
+      return [];
+    }
+
+    // Fetch message counts for these conversations
+    const convIds = convs.map((c) => c.id);
+    const countMap = new Map<string, number>();
+
+    if (convIds.length > 0) {
+      const { data: messages } = await this.db
+        .from("messages")
+        .select("conversation_id")
+        .in("conversation_id", convIds);
+
+      if (messages) {
+        for (const m of messages) {
+          countMap.set(m.conversation_id, (countMap.get(m.conversation_id) ?? 0) + 1);
+        }
+      }
+    }
+
+    return convs.map((c) => ({
+      id: c.id,
+      telegramChatId: c.telegram_chat_id,
+      title: c.title,
+      summary: c.summary,
+      isActive: c.is_active,
+      messageCount: countMap.get(c.id) ?? 0,
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
+    }));
+  }
+
+  async getActiveSession(chatId: number): Promise<ConversationSession | null> {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await this.db
+      .from("conversations")
+      .select("id, telegram_chat_id, title, summary, is_active, created_at, updated_at")
+      .eq("telegram_chat_id", chatId)
+      .eq("is_active", true)
+      .gte("updated_at", cutoff)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) {
+      return null;
+    }
+
+    const { count } = await this.db
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", data.id);
+
+    return {
+      id: data.id,
+      telegramChatId: data.telegram_chat_id,
+      title: data.title,
+      summary: data.summary,
+      isActive: data.is_active,
+      messageCount: count ?? 0,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  async switchActiveSession(
+    chatId: number,
+    targetConversationId: string
+  ): Promise<ConversationSession> {
+    // 1. Deactivate other sessions for this chat
+    await this.db
+      .from("conversations")
+      .update({ is_active: false })
+      .eq("telegram_chat_id", chatId);
+
+    // 2. Activate target session and touch updated_at
+    const nowIso = new Date().toISOString();
+    const { data, error } = await this.db
+      .from("conversations")
+      .update({ is_active: true, updated_at: nowIso })
+      .eq("id", targetConversationId)
+      .eq("telegram_chat_id", chatId)
+      .select("id, telegram_chat_id, title, summary, is_active, created_at, updated_at")
+      .single();
+
+    if (error || !data) {
+      throw new Error(`Failed to switch to session ${targetConversationId}: ${error?.message ?? "Not found"}`);
+    }
+
+    const { count } = await this.db
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", data.id);
+
+    return {
+      id: data.id,
+      telegramChatId: data.telegram_chat_id,
+      title: data.title,
+      summary: data.summary,
+      isActive: data.is_active,
+      messageCount: count ?? 0,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  async updateSessionTitle(conversationId: string, title: string): Promise<void> {
+    const { error } = await this.db
+      .from("conversations")
+      .update({ title: title.trim(), updated_at: new Date().toISOString() })
+      .eq("id", conversationId);
+
+    if (error) {
+      throw new Error(`Failed to update session title: ${error.message}`);
+    }
+  }
+
+  async archiveSession(chatId: number): Promise<void> {
+    const { error } = await this.db
+      .from("conversations")
+      .update({ is_active: false })
+      .eq("telegram_chat_id", chatId)
+      .eq("is_active", true);
+
+    if (error) {
+      console.warn("[supabase-store] Failed to archive session:", error.message);
+    }
+  }
+
+  async deleteSession(conversationId: string): Promise<void> {
+    const { error } = await this.db
+      .from("conversations")
+      .delete()
+      .eq("id", conversationId);
+
+    if (error) {
+      throw new Error(`Failed to delete session: ${error.message}`);
+    }
+  }
+
+  async getSessionMessages(
+    conversationId: string,
+    limit = 50
+  ): Promise<Array<{ id: string; role: MessageRole; content: string; created_at: string }>> {
+    const { data, error } = await this.db
+      .from("messages")
+      .select("id, role, content, created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true })
+      .limit(limit);
+
+    if (error || !data) {
+      return [];
+    }
+    return data;
+  }
+
+  async searchMessageHistory(
+    chatId: number,
+    query: string,
+    options?: { limit?: number; conversationId?: string }
+  ): Promise<HistorySearchResult[]> {
+    const limit = options?.limit ?? 10;
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+
+    let convQuery = this.db
+      .from("conversations")
+      .select("id, title")
+      .eq("telegram_chat_id", chatId);
+
+    if (options?.conversationId) {
+      convQuery = convQuery.eq("id", options.conversationId);
+    }
+
+    const { data: convs, error: convErr } = await convQuery;
+    if (convErr || !convs || convs.length === 0) {
+      return [];
+    }
+
+    const titleMap = new Map<string, string | null>();
+    const convIds: string[] = [];
+    for (const c of convs) {
+      titleMap.set(c.id, c.title);
+      convIds.push(c.id);
+    }
+
+    const { data: messages, error: msgErr } = await this.db
+      .from("messages")
+      .select("id, conversation_id, role, content, created_at")
+      .in("conversation_id", convIds)
+      .ilike("content", `%${trimmed}%`)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (msgErr || !messages) {
+      console.warn("[supabase-store] History search failed:", msgErr?.message);
+      return [];
+    }
+
+    return messages.map((m) => ({
+      messageId: m.id,
+      conversationId: m.conversation_id,
+      sessionTitle: titleMap.get(m.conversation_id) ?? null,
+      role: m.role,
+      content: m.content,
+      createdAt: m.created_at,
+      similarity: 1.0,
+    }));
   }
 
   async getOldMessages(

@@ -8,11 +8,16 @@ export async function handleClear(ctx: Context): Promise<void> {
   try {
     await clearConversation(chatId);
     await ctx
-      .reply("🧹 **Conversation context cleared.** Starting fresh, Boss!", {
-        parse_mode: "Markdown",
-      })
+      .reply(
+        "🧹 **Session archived.** Starting fresh with a new thread, Boss!\n\n_Past conversations are preserved and accessible via `/sessions` and `/history`._",
+        {
+          parse_mode: "Markdown",
+        }
+      )
       .catch(async () => {
-        await ctx.reply("🧹 Conversation context cleared. Starting fresh, Boss!");
+        await ctx.reply(
+          "🧹 Session archived. Starting fresh with a new thread, Boss!\n\nPast conversations are preserved and accessible via /sessions and /history."
+        );
       });
   } catch (error) {
     await ctx.reply(
