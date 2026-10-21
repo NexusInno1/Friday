@@ -13,14 +13,15 @@ export { generateEmbedding };
  * Formats a list of memory rows into formatted bullet points including importance and saved date.
  */
 export function formatMemoryLines(
-  memories: Array<Pick<Memory, "content" | "importance" | "created_at">>
+  memories: Array<Pick<Memory, "content" | "importance" | "created_at" | "source">>
 ): string {
   if (memories.length === 0) return "";
   return memories
     .map((m) => {
       const date = m.created_at ? m.created_at.slice(0, 10) : "";
       const dateSuffix = date ? ` (saved: ${date})` : "";
-      return `- [importance: ${m.importance}] ${m.content}${dateSuffix}`;
+      const sourceLabel = m.source === "web" ? " [Source: Web (Untrusted)]" : "";
+      return `- [importance: ${m.importance}]${sourceLabel} ${m.content}${dateSuffix}`;
     })
     .join("\n");
 }

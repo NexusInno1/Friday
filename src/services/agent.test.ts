@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { InMemoryDataStore } from "../db/in-memory-datastore.js";
 import { AssistantEngine, resolveGeminiModel } from "./agent.service.js";
+import { DEFAULT_GEMINI_MODEL } from "../config/env.js";
 import type { LanguageModelV1 } from "@ai-sdk/provider";
+import * as alertService from "./alert.service.js";
 
 describe("AssistantEngine", () => {
   let store: InMemoryDataStore;
@@ -10,9 +12,14 @@ describe("AssistantEngine", () => {
     store = new InMemoryDataStore();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("migrates retired Gemini 2.0 configuration to the supported model", () => {
-    expect(resolveGeminiModel("gemini-2.0-flash")).toBe("gemini-2.5-flash");
-    expect(resolveGeminiModel("gemini-2.0-flash-lite")).toBe("gemini-2.5-flash");
+    expect(resolveGeminiModel("gemini-2.0-flash")).toBe(DEFAULT_GEMINI_MODEL);
+    expect(resolveGeminiModel("gemini-2.0-flash-lite")).toBe(DEFAULT_GEMINI_MODEL);
+    expect(resolveGeminiModel("gemini-3.5-flash-lite")).toBe("gemini-3.5-flash-lite");
     expect(resolveGeminiModel("gemini-2.5-flash")).toBe("gemini-2.5-flash");
   });
 
@@ -332,4 +339,221 @@ describe("AssistantEngine", () => {
     await expect(engine.reply(12345, "Bad request")).rejects.toThrow("400 Bad Request");
     expect(fallbackCalled).toBe(false);
   });
+
+  it("retries Groq with simpler schema when first attempt fails with tool/schema error", async () => {
+    const mockPrimary: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "primary-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        throw new Error("503 Service Unavailable");
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    let groqAttempts = 0;
+    const mockGroq: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "llama-3.3-70b-versatile",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        groqAttempts++;
+        if (groqAttempts === 1) {
+          throw new Error("failed to generate tool calls: schema validation failed");
+        }
+        return {
+          text: "Recovered via simpler schema",
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 5 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const engine = new AssistantEngine({
+      store,
+      model: mockPrimary as any,
+      fallbacks: [{ provider: "Groq", modelName: "llama-3.3-70b-versatile", model: mockGroq as any }],
+    });
+
+    const reply = await engine.reply(12345, "Check reminders");
+    expect(reply).toContain("Recovered via simpler schema");
+    expect(reply).toContain("Served via Groq fallback");
+    expect(groqAttempts).toBe(2);
+  });
+
+  it("sends critical alert when all models in fallback chain fail", async () => {
+    const mockPrimary: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "primary-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        throw new Error("503 Primary down");
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const mockGroq: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "groq-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        throw new Error("500 Groq down");
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const alertSpy = vi.spyOn(alertService, "sendCriticalAlert").mockResolvedValue(true);
+
+    const engine = new AssistantEngine({
+      store,
+      model: mockPrimary as any,
+      fallbacks: [{ provider: "Groq", modelName: "llama-3.3-70b-versatile", model: mockGroq as any }],
+    });
+
+    await expect(engine.reply(12345, "Trigger outage")).rejects.toThrow("500 Groq down");
+    expect(alertSpy).toHaveBeenCalledWith(
+      "all_models_down",
+      expect.any(Error),
+      expect.objectContaining({ attempted: expect.arrayContaining(["gemini", "Groq"]) })
+    );
+  });
+
+  it("dispatches Telegram confirmation buttons when web_search and store_memory occur in the same turn", async () => {
+    const mockDispatcher = {
+      sendMessage: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ answer: "AI news results", results: [] }),
+    });
+
+    let step = 0;
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "mock-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        step++;
+        if (step === 1) {
+          return {
+            text: "",
+            finishReason: "tool-calls",
+            toolCalls: [
+              {
+                toolCallType: "function" as const,
+                toolCallId: "call_web_search",
+                toolName: "web_search",
+                args: JSON.stringify({ query: "AI news" }),
+              },
+            ],
+            usage: { promptTokens: 10, completionTokens: 5 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        }
+        if (step === 2) {
+          return {
+            text: "",
+            finishReason: "tool-calls",
+            toolCalls: [
+              {
+                toolCallType: "function" as const,
+                toolCallId: "call_store_memory",
+                toolName: "store_memory",
+                args: JSON.stringify({ content: "AI news preference" }),
+              },
+            ],
+            usage: { promptTokens: 10, completionTokens: 5 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        }
+        return {
+          text: "I have requested your confirmation, Boss.",
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 5 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    try {
+      const engine = new AssistantEngine({
+        store,
+        model: mockModel as any,
+        dispatcher: mockDispatcher,
+      });
+
+      const reply = await engine.reply(12345, "Search for AI news and remember it");
+      expect(reply).toBe("I have requested your confirmation, Boss.");
+      expect(mockDispatcher.sendMessage).toHaveBeenCalledTimes(1);
+      const [chatId, text, opts] = mockDispatcher.sendMessage.mock.calls[0];
+      expect(chatId).toBe(12345);
+      expect(text).toContain("Memory Poisoning Guard: Confirmation Required");
+      expect(opts.buttons?.length).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("emits structured JSON log tool_call on each tool execution", async () => {
+    const { logger } = await import("../utils/logger.js");
+    const loggerSpy = vi.spyOn(logger, "info");
+
+    let step = 0;
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: "v1",
+      modelId: "mock-model",
+      provider: "mock",
+      defaultObjectGenerationMode: "json",
+      async doGenerate() {
+        step++;
+        if (step === 1) {
+          return {
+            text: "",
+            finishReason: "tool-calls",
+            toolCalls: [
+              {
+                toolCallType: "function" as const,
+                toolCallId: "call_list_reminders",
+                toolName: "list_reminders",
+                args: "{}",
+              },
+            ],
+            usage: { promptTokens: 10, completionTokens: 5 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        }
+        return {
+          text: "No reminders found.",
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 5 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      async doStream() { throw new Error("Not implemented"); },
+    };
+
+    const engine = new AssistantEngine({
+      store,
+      model: mockModel as any,
+    });
+
+    await engine.reply(12345, "Show my reminders");
+    const toolCallLogs = loggerSpy.mock.calls.filter((c) => c[0] === "tool_call");
+    expect(toolCallLogs.length).toBeGreaterThanOrEqual(1);
+    expect(toolCallLogs[0][1]).toMatchObject({
+      toolName: "list_reminders",
+      toolCallId: "call_list_reminders",
+    });
+  });
 });
+

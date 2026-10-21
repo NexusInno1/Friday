@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { InMemoryDataStore } from "../db/in-memory-datastore.js";
 import {
   ProactiveScheduler,
@@ -519,5 +519,163 @@ describe("ProactiveScheduler", () => {
       }
     });
 
+  describe("Idempotent Scheduled Jobs & Distributed Concurrency", () => {
+    it("prevents double-sending when two scheduler instances run sendDailyBriefing at once", async () => {
+      const current = env();
+      setEnv({ ...current, TAVILY_API_KEY: "mock_tavily_key" });
+
+      const store = new (await import("../db/in-memory-datastore.js")).InMemoryDataStore();
+      const dispatcher1 = new InMemoryDispatcher();
+      const dispatcher2 = new InMemoryDispatcher();
+
+      const scheduler1 = new ProactiveScheduler({ store, dispatcher: dispatcher1 });
+      const scheduler2 = new ProactiveScheduler({ store, dispatcher: dispatcher2 });
+
+      try {
+        const [res1, res2] = await Promise.all([
+          scheduler1.sendDailyBriefing(),
+          scheduler2.sendDailyBriefing(),
+        ]);
+
+        // Exactly one instance should succeed in claiming and sending
+        expect([res1, res2]).toContain(true);
+        expect([res1, res2]).toContain(false);
+        expect(dispatcher1.dispatched.length + dispatcher2.dispatched.length).toBe(1);
+      } finally {
+        setEnv(current);
+      }
+    });
+
+    it("prevents double-delivery when two scheduler instances run checkDueReminders at once", async () => {
+      const store = new (await import("../db/in-memory-datastore.js")).InMemoryDataStore();
+      const dispatcher1 = new InMemoryDispatcher();
+      const dispatcher2 = new InMemoryDispatcher();
+
+      const scheduler1 = new ProactiveScheduler({ store, dispatcher: dispatcher1 });
+      const scheduler2 = new ProactiveScheduler({ store, dispatcher: dispatcher2 });
+
+      // Create a due reminder
+      const nowIso = new Date().toISOString();
+      await store.createReminder({
+        userId: 123456789,
+        chatId: 123456789,
+        message: "Double run test",
+        triggerAt: nowIso,
+      });
+
+      const [count1, count2] = await Promise.all([
+        scheduler1.checkDueReminders(),
+        scheduler2.checkDueReminders(),
+      ]);
+
+      // Exactly 1 reminder should be claimed and sent
+      expect(count1 + count2).toBe(1);
+      expect(dispatcher1.dispatched.length + dispatcher2.dispatched.length).toBe(1);
+    });
+
+    it("sends missed briefing on restart when scheduled time passed within grace window", async () => {
+      const current = env();
+      const store = new (await import("../db/in-memory-datastore.js")).InMemoryDataStore();
+      const dispatcher = new InMemoryDispatcher();
+
+      // Configure scheduled briefing time to 30 minutes in the past
+      const now = new Date();
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Kolkata",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).formatToParts(now);
+      const curHour = Number(parts.find((p) => p.type === "hour")?.value ?? "12");
+      const curMin = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+
+      let pastHour = curHour;
+      let pastMin = curMin - 30;
+      if (pastMin < 0) {
+        pastMin += 60;
+        pastHour = Math.max(0, pastHour - 1);
+      }
+      const pastTimeStr = `${String(pastHour).padStart(2, "0")}:${String(pastMin).padStart(2, "0")}`;
+
+      setEnv({
+        ...current,
+        TAVILY_API_KEY: "mock_tavily_key",
+        USER_TIMEZONE: "Asia/Kolkata",
+        BRIEFING_TIME: pastTimeStr,
+        BRIEFING_MISSED_GRACE_PERIOD_MINUTES: 120,
+      });
+
+      const scheduler = new ProactiveScheduler({ store, dispatcher });
+
+      try {
+        const sent = await scheduler.checkMissedBriefing();
+        expect(sent).toBe(true);
+        expect(dispatcher.dispatched.length).toBe(1);
+        expect(dispatcher.dispatched[0].text).toContain("Today's Intelligence Briefing");
+      } finally {
+        setEnv(current);
+      }
+    });
+
+    it("skips missed briefing on restart when scheduled time passed beyond grace window", async () => {
+      const current = env();
+      const store = new (await import("../db/in-memory-datastore.js")).InMemoryDataStore();
+      const dispatcher = new InMemoryDispatcher();
+
+      // Configure scheduled briefing time to 3 hours in the past, with a 30m grace period
+      setEnv({
+        ...current,
+        TAVILY_API_KEY: "mock_tavily_key",
+        USER_TIMEZONE: "Asia/Kolkata",
+        BRIEFING_TIME: "00:01",
+        BRIEFING_MISSED_GRACE_PERIOD_MINUTES: 5,
+      });
+
+      const scheduler = new ProactiveScheduler({ store, dispatcher });
+
+      try {
+        const sent = await scheduler.checkMissedBriefing();
+        expect(sent).toBe(false);
+        expect(dispatcher.dispatched.length).toBe(0);
+      } finally {
+        setEnv(current);
+      }
+    });
+
+    it("respects Tavily daily cap and pauses search calls when limit reached", async () => {
+      const current = env();
+      const costTracker = await import("./cost-tracker.service.js");
+      costTracker.resetDailyUsage();
+
+      setEnv({
+        ...current,
+        TAVILY_API_KEY: "real_or_mock_key",
+        DAILY_TAVILY_CALL_CAP: 2,
+      });
+
+      const originalFetch = globalThis.fetch;
+      let fetchCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(async () => {
+        fetchCount++;
+        return {
+          ok: true,
+          json: async () => ({
+            results: [{ title: "News 1", url: "https://example.com/1", published_date: new Date().toISOString() }],
+          }),
+        };
+      });
+
+      try {
+        const { fetchBriefingSnapshot } = await import("./scheduler.service.js");
+        await fetchBriefingSnapshot("Asia/Kolkata");
+        // At most 2 fetch calls should have executed due to DAILY_TAVILY_CALL_CAP: 2
+        expect(fetchCount).toBeLessThanOrEqual(2);
+      } finally {
+        globalThis.fetch = originalFetch;
+        costTracker.resetDailyUsage();
+        setEnv(current);
+      }
+    });
+  });
 });
 

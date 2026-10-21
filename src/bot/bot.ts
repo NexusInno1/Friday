@@ -15,8 +15,9 @@ import { handleBriefing } from "./commands/briefing.js";
 import { handleSessions } from "./commands/sessions.js";
 import { handleHistory } from "./commands/history.js";
 import { getAssistantEngine, AssistantEngine } from "../services/agent.service.js";
-import { getScheduler, ProactiveScheduler } from "../services/scheduler.service.js";
+import { getScheduler, ProactiveScheduler, TelegramDispatcher } from "../services/scheduler.service.js";
 import { deleteMemory } from "../services/memory.service.js";
+import { confirmPendingMemory, rejectPendingMemory } from "../services/memory-guard.service.js";
 import { switchSession, deleteSession } from "../services/session.service.js";
 import { getDataStore } from "../db/datastore-provider.js";
 import { chunkMessage } from "../utils/chunk.js";
@@ -32,6 +33,10 @@ export function createBot(options: BotFactoryOptions = {}): Bot {
   const bot = new Bot(token);
   const engine = options.assistantEngine ?? getAssistantEngine();
   const scheduler = options.scheduler ?? getScheduler();
+
+  // Wire dispatcher to engine so interactive confirmations (e.g. memory guard) reach Telegram
+  const dispatcher = new TelegramDispatcher(bot);
+  engine.setDispatcher(dispatcher);
 
   // Global error boundary
   bot.catch(errorHandler);
@@ -125,6 +130,56 @@ export function createBot(options: BotFactoryOptions = {}): Bot {
     } catch (err) {
       console.error("[bot:memory_delete] Error deleting memory:", err);
       await ctx.answerCallbackQuery({ text: "Failed to delete memory." });
+    }
+  });
+
+  // Callback query handlers for memory confirmation guard
+  bot.callbackQuery(/^confirm_mem:([a-f0-9-]+)$/i, async (ctx) => {
+    const memoryId = ctx.match[1];
+    const store = getDataStore();
+    try {
+      const saved = await confirmPendingMemory(memoryId, store);
+      if (!saved) {
+        await ctx.answerCallbackQuery({ text: "Memory confirmation expired or already processed." });
+        await ctx
+          .editMessageText("⚠️ **Memory confirmation expired or already processed.**", {
+            parse_mode: "Markdown",
+          })
+          .catch(async () => {
+            await ctx.editMessageText("⚠️ Memory confirmation expired or already processed.");
+          });
+        return;
+      }
+      await ctx.answerCallbackQuery({ text: "Memory confirmed and saved!" });
+      await ctx
+        .editMessageText(
+          `✅ **Memory Approved & Saved (Source: Web)**\n\n> "${saved.content}"`,
+          { parse_mode: "Markdown" }
+        )
+        .catch(async () => {
+          await ctx.editMessageText(`✅ Memory Approved & Saved: ${saved.content}`);
+        });
+    } catch (err) {
+      console.error("[bot:confirm_mem] Error confirming memory:", err);
+      await ctx.answerCallbackQuery({ text: "Failed to confirm memory." });
+    }
+  });
+
+  bot.callbackQuery(/^reject_mem:([a-f0-9-]+)$/i, async (ctx) => {
+    const memoryId = ctx.match[1];
+    try {
+      const rejected = rejectPendingMemory(memoryId);
+      await ctx.answerCallbackQuery({ text: rejected ? "Memory discarded." : "Already handled." });
+      await ctx
+        .editMessageText("❌ **Memory discarded.** Untrusted web content will not be remembered.", {
+          parse_mode: "Markdown",
+        })
+        .catch(async () => {
+          await ctx.editMessageText("❌ Memory discarded. Untrusted web content will not be remembered.");
+        });
+    } catch (err) {
+      console.error("[bot:reject_mem] Error rejecting memory:", err);
+      await ctx.answerCallbackQuery({ text: "Failed to reject memory." });
     }
   });
 

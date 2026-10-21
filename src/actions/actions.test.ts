@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { InMemoryDataStore } from "../db/in-memory-datastore.js";
 import {
   computeSnoozedTime,
@@ -9,7 +9,10 @@ import {
   checkMemoryContradiction,
   EMBEDDING_MODEL,
   webSearchAction,
+  rememberAction,
+  recallMemoriesAction,
 } from "./actions.js";
+import { setAlertDispatcher, resetAlertRateLimits } from "../services/alert.service.js";
 import type { LanguageModelV1 } from "@ai-sdk/provider";
 
 describe("Core Actions", () => {
@@ -20,8 +23,8 @@ describe("Core Actions", () => {
   });
 
   describe("Embedding Configuration", () => {
-    it("uses the supported text-embedding-004 model", () => {
-      expect(EMBEDDING_MODEL).toBe("text-embedding-004");
+    it("uses the supported gemini-embedding-2 model", () => {
+      expect(EMBEDDING_MODEL).toBe("gemini-embedding-2");
     });
   });
 
@@ -259,6 +262,56 @@ describe("Core Actions", () => {
         expect(result.results[0].title).toBe("Test News Article");
       } finally {
         globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("Embedding Failure Alerting & Error Paths", () => {
+    it("logs error, alerts, and throws when embedding fails in rememberAction", async () => {
+      resetAlertRateLimits();
+      const mockDispatcher = {
+        sendAlert: vi.fn().mockResolvedValue(undefined),
+      };
+      setAlertDispatcher(mockDispatcher);
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error("ENOTFOUND generativelanguage.googleapis.com"));
+
+      try {
+        await expect(
+          rememberAction("Important preference", ["pref"], 3, store, 100)
+        ).rejects.toThrow(/Embedding generation failed/);
+
+        expect(mockDispatcher.sendAlert).toHaveBeenCalledTimes(1);
+        const alertMsg = (mockDispatcher.sendAlert as any).mock.calls[0][0];
+        expect(alertMsg).toContain("CRITICAL ALERT: embedding_failure");
+      } finally {
+        globalThis.fetch = originalFetch;
+        setAlertDispatcher(null);
+      }
+    });
+
+    it("logs error, alerts, and throws when embedding fails in recallMemoriesAction", async () => {
+      resetAlertRateLimits();
+      const mockDispatcher = {
+        sendAlert: vi.fn().mockResolvedValue(undefined),
+      };
+      setAlertDispatcher(mockDispatcher);
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error("503 Service Unavailable"));
+
+      try {
+        await expect(
+          recallMemoriesAction("What is my name?", 5, store, 100)
+        ).rejects.toThrow(/Embedding recall failed/);
+
+        expect(mockDispatcher.sendAlert).toHaveBeenCalledTimes(1);
+        const alertMsg = (mockDispatcher.sendAlert as any).mock.calls[0][0];
+        expect(alertMsg).toContain("CRITICAL ALERT: embedding_failure");
+      } finally {
+        globalThis.fetch = originalFetch;
+        setAlertDispatcher(null);
       }
     });
   });

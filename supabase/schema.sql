@@ -59,10 +59,11 @@ CREATE TABLE IF NOT EXISTS memories (
   user_id     BIGINT NOT NULL,
   content     TEXT NOT NULL,
   tags        TEXT[] NOT NULL DEFAULT '{}',
-  embedding   vector(768),  -- Gemini text-embedding-004 dimensions
+  embedding   vector(768),  -- gemini-embedding-2 dimensions (768)
   importance  SMALLINT NOT NULL DEFAULT 3 CHECK (importance BETWEEN 1 AND 5),
   is_active   BOOLEAN NOT NULL DEFAULT TRUE,
   superseded_by UUID REFERENCES memories(id) ON DELETE SET NULL,
+  source      TEXT NOT NULL CHECK (source IN ('user', 'web', 'system')) DEFAULT 'user',
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -95,6 +96,7 @@ RETURNS TABLE (
   importance    SMALLINT,
   is_active     BOOLEAN,
   superseded_by UUID,
+  source        TEXT,
   created_at    TIMESTAMPTZ,
   updated_at    TIMESTAMPTZ,
   similarity    FLOAT
@@ -109,6 +111,7 @@ LANGUAGE SQL STABLE AS $$
     m.importance,
     m.is_active,
     m.superseded_by,
+    m.source,
     m.created_at,
     m.updated_at,
     1 - (m.embedding <=> query_embedding) AS similarity

@@ -1,8 +1,10 @@
 import "dotenv/config";
 import { z } from "zod";
 
-export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 export const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
+export const DEFAULT_OPENAI_MODEL = "gpt-4o";
+export const DEFAULT_EMBEDDING_MODEL = "gemini-embedding-2";
 
 export const EnvSchema = z.object({
   // Telegram
@@ -19,6 +21,8 @@ export const EnvSchema = z.object({
   GROQ_API_KEY: z.string().optional(),
   GROQ_MODEL: z.string().trim().min(1).default(DEFAULT_GROQ_MODEL),
   OPENAI_API_KEY: z.string().optional(),
+  OPENAI_MODEL: z.string().trim().min(1).default(DEFAULT_OPENAI_MODEL),
+  EMBEDDING_MODEL: z.string().trim().min(1).default(DEFAULT_EMBEDDING_MODEL),
 
   // Tavily
   TAVILY_API_KEY: z.string().min(1, "TAVILY_API_KEY is required"),
@@ -33,6 +37,9 @@ export const EnvSchema = z.object({
   USER_TIMEZONE: z.string().default("Asia/Kolkata"),
   USER_NAME: z.string().default("Boss"),
   BRIEFING_TIME: z.string().default("07:00"), // HH:MM in USER_TIMEZONE
+  BRIEFING_MISSED_GRACE_PERIOD_MINUTES: z.coerce.number().min(1).default(120),
+  DAILY_LLM_CALL_CAP: z.coerce.number().min(1).default(100),
+  DAILY_TAVILY_CALL_CAP: z.coerce.number().min(1).default(50),
 
   // Deployment
   WEBHOOK_URL: z
@@ -114,14 +121,19 @@ export function env(): Env {
         GEMINI_API_KEY: "mock_gemini_key",
         GEMINI_MODEL: DEFAULT_GEMINI_MODEL,
         OPENAI_API_KEY: undefined,
+        OPENAI_MODEL: DEFAULT_OPENAI_MODEL,
         GROQ_API_KEY: undefined,
         GROQ_MODEL: DEFAULT_GROQ_MODEL,
+        EMBEDDING_MODEL: DEFAULT_EMBEDDING_MODEL,
         TAVILY_API_KEY: "mock_tavily_key",
         SUPABASE_URL: "https://mock.supabase.co",
         SUPABASE_SERVICE_ROLE_KEY: "mock_service_key",
         USER_TIMEZONE: "Asia/Kolkata",
         USER_NAME: "Boss",
         BRIEFING_TIME: "07:00",
+        BRIEFING_MISSED_GRACE_PERIOD_MINUTES: 120,
+        DAILY_LLM_CALL_CAP: 100,
+        DAILY_TAVILY_CALL_CAP: 50,
         WEBHOOK_URL: undefined,
         TELEGRAM_WEBHOOK_SECRET: "mock_telegram_webhook_secret_16chars",
         HEALTH_PORT: 8080,
