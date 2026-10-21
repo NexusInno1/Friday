@@ -20,7 +20,7 @@ export const webSearchTool = tool({
   description:
     "Search the web for real-time information, news, current events, facts, or research. " +
     "When searching for news, current events, or today's briefings, ALWAYS set topic='news' and days=1 to guarantee fresh coverage from the last 24 hours. " +
-    "For comprehensive news requests, search across key pillars (International, Business, Sports, AI, and Regional). " +
+    "For comprehensive news requests, search across key pillars (International, Business, AI, and Regional). " +
     "Synthesize findings into an executive briefing with bold titles and structured bullet points. " +
     "Never dump raw snippets, unformatted lines, or conversational filler.",
   parameters: z.object({
