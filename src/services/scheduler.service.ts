@@ -3,7 +3,7 @@ import { InlineKeyboard, type Bot } from "grammy";
 import type { DataStore } from "../db/datastore.js";
 import { getDataStore } from "../db/datastore-provider.js";
 import { env } from "../config/env.js";
-import { parseTimeString, getEndOfDayISO } from "../utils/time.js";
+import { parseTimeString, getEndOfDayISO, getTargetTimeISO } from "../utils/time.js";
 import { runFactCompaction } from "./compaction.service.js";
 import {
   snoozeReminderAction,
@@ -11,6 +11,8 @@ import {
   updateBriefingTimeAction,
 } from "../actions/actions.js";
 import type { Reminder } from "../db/schema.js";
+import { sendCriticalAlert } from "./alert.service.js";
+import { checkAndIncrementUsage } from "./cost-tracker.service.js";
 
 // ─── Notification Dispatcher Seam ────────────────────────────────────────────
 
@@ -434,6 +436,12 @@ async function queryTavilyCategory(
   days: number
 ): Promise<TavilyRawResult[]> {
   try {
+    const usageCheck = await checkAndIncrementUsage("tavily");
+    if (!usageCheck.allowed) {
+      console.warn("[scheduler:briefing] Daily Tavily call cap reached. Skipping category search:", usageCheck.error);
+      return [];
+    }
+
     const response = await fetch("https://api.tavily.com/search", {
       method: "POST",
       headers: {
@@ -625,8 +633,8 @@ export class ProactiveScheduler {
   async start(): Promise<void> {
     const timezone = env().USER_TIMEZONE;
 
-    // 1. Minute-by-minute reminder poller
-    this.reminderCron = new Cron("* * * * *", () => void this.checkDueReminders());
+    // 1. Minute-by-minute reminder poller with explicit timezone
+    this.reminderCron = new Cron("* * * * *", { timezone }, () => void this.checkDueReminders());
 
     // 2. Daily fact compaction at 3 AM (ADR-0006)
     this.compactionCron = new Cron("0 3 * * *", { timezone }, () => {
@@ -640,7 +648,60 @@ export class ProactiveScheduler {
     const savedTime = await this.fetchSavedBriefingTime();
     this.scheduleBriefingCron(savedTime);
 
+    // 4. On startup: check if today's briefing was missed within grace period
+    try {
+      await this.checkMissedBriefing();
+    } catch (missedErr) {
+      console.error("[scheduler] Error during startup missed briefing check:", missedErr);
+    }
+
     console.log("✅ Proactive Scheduler running");
+  }
+
+  /**
+   * Checks if today's briefing was missed due to downtime / restart,
+   * and sends it if the scheduled time passed less than BRIEFING_MISSED_GRACE_PERIOD_MINUTES ago.
+   */
+  async checkMissedBriefing(): Promise<boolean> {
+    const { TELEGRAM_ALLOWED_USER_ID, USER_TIMEZONE, BRIEFING_MISSED_GRACE_PERIOD_MINUTES } = env();
+    const savedTime = await this.fetchSavedBriefingTime();
+
+    const now = new Date();
+    const todayDateStr = now.toLocaleDateString("en-CA", { timeZone: USER_TIMEZONE });
+
+    // Check today's scheduled run time in owner timezone
+    const todayScheduledIso = getTargetTimeISO(savedTime, USER_TIMEZONE, now);
+    const todayScheduledMs = new Date(todayScheduledIso).getTime();
+    let minutesPassed = (now.getTime() - todayScheduledMs) / (60 * 1000);
+    let targetDateStr = todayDateStr;
+
+    // If today's scheduled time is in the future (e.g. restart early morning), check yesterday's scheduled run
+    if (minutesPassed < 0) {
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const yesterdayScheduledIso = getTargetTimeISO(savedTime, USER_TIMEZONE, yesterday);
+      const yesterdayMinutesPassed = (now.getTime() - new Date(yesterdayScheduledIso).getTime()) / (60 * 1000);
+      if (yesterdayMinutesPassed >= 0 && yesterdayMinutesPassed <= BRIEFING_MISSED_GRACE_PERIOD_MINUTES) {
+        minutesPassed = yesterdayMinutesPassed;
+        targetDateStr = yesterday.toLocaleDateString("en-CA", { timeZone: USER_TIMEZONE });
+      }
+    }
+
+    if (minutesPassed >= 0) {
+      if (minutesPassed <= BRIEFING_MISSED_GRACE_PERIOD_MINUTES) {
+        const lastSentDate = await this.store.getLastBriefingDate(TELEGRAM_ALLOWED_USER_ID);
+        if (lastSentDate !== targetDateStr) {
+          console.log(
+            `[scheduler] Missed briefing detected on startup (${Math.round(minutesPassed)}m ago, grace: ${BRIEFING_MISSED_GRACE_PERIOD_MINUTES}m). Sending now...`
+          );
+          return await this.sendDailyBriefing();
+        }
+      } else {
+        console.log(
+          `[scheduler] Missed briefing for ${targetDateStr} was ${Math.round(minutesPassed)}m ago (exceeds ${BRIEFING_MISSED_GRACE_PERIOD_MINUTES}m grace window). Skipping.`
+        );
+      }
+    }
+    return false;
   }
 
   stop(): void {
@@ -723,9 +784,19 @@ export class ProactiveScheduler {
     }
   }
 
-  async sendDailyBriefing(): Promise<void> {
-    if (!this.dispatcher) return;
+  async sendDailyBriefing(options: { modelOverride?: string; isFallback?: boolean; fallbackReason?: string } = {}): Promise<boolean> {
+    if (!this.dispatcher) return false;
     const { TELEGRAM_ALLOWED_USER_ID, USER_NAME, USER_TIMEZONE } = env();
+
+    const todayDateStr = new Date().toLocaleDateString("en-CA", { timeZone: USER_TIMEZONE });
+    const scheduledAtIso = new Date().toISOString();
+
+    // 1. Atomic claim in database to prevent double-sending
+    const claimed = await this.store.claimDailyBriefing(TELEGRAM_ALLOWED_USER_ID, todayDateStr, scheduledAtIso);
+    if (!claimed) {
+      console.log(`[scheduler] Daily briefing for ${todayDateStr} already claimed or sent by another instance. Skipping.`);
+      return false;
+    }
 
     try {
       const endOfDayIso = getEndOfDayISO(USER_TIMEZONE);
@@ -750,6 +821,7 @@ export class ProactiveScheduler {
         briefing += `${liveSnapshot}\n\n`;
       }
 
+      // Reminders section (formerly Agenda - renamed per Item 8)
       if (todayReminders.length > 0) {
         briefing += `📋 **Today's Reminders (${todayReminders.length})**\n`;
         for (const r of todayReminders) {
@@ -762,13 +834,24 @@ export class ProactiveScheduler {
         }
         briefing += `\n(Calendar not connected, agenda unknown beyond scheduled reminders)\n`;
       } else {
-        briefing += `📋 **Agenda:** Calendar not connected, agenda unknown.\n`;
+        briefing += `📋 **Reminders:** Calendar not connected, agenda unknown.\n`;
       }
 
-      // Closing greeting removed per owner policy. Briefing terminates after agenda.
+      // If scheduled briefing used a fallback model, add a note at the end (Item 5)
+      if (options.isFallback) {
+        const fallbackNote = options.modelOverride
+          ? `\n_(⚡ Served via ${options.modelOverride} fallback${options.fallbackReason ? `: ${options.fallbackReason}` : ""})_`
+          : `\n_(⚡ Served via fallback model)_`;
+        briefing += `\n${fallbackNote}`;
+      }
+
       await this.dispatcher.sendMessage(TELEGRAM_ALLOWED_USER_ID, briefing.trim());
+      await this.store.markDailyBriefingSent(TELEGRAM_ALLOWED_USER_ID, todayDateStr, options.modelOverride);
+      return true;
     } catch (err) {
       console.error("[scheduler] Failed to send daily briefing:", err);
+      await sendCriticalAlert("scheduler_failed", err, { job: "sendDailyBriefing", date: todayDateStr });
+      return false;
     }
   }
 

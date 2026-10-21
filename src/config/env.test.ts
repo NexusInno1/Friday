@@ -181,4 +181,38 @@ describe("EnvSchema - TELEGRAM_WEBHOOK_SECRET and WEBHOOK_URL rules", () => {
       expect(result.data.GROQ_MODEL).toBe("llama-3.1-8b-instant");
     }
   });
+
+  it("defaults OPENAI_MODEL to gpt-4o and allows custom model", () => {
+    const defaultRes = EnvSchema.safeParse(baseValidEnv);
+    expect(defaultRes.success).toBe(true);
+    if (defaultRes.success) {
+      expect(defaultRes.data.OPENAI_MODEL).toBe("gpt-4o");
+    }
+
+    const customRes = EnvSchema.safeParse({
+      ...baseValidEnv,
+      OPENAI_MODEL: "gpt-4o-mini",
+    });
+    expect(customRes.success).toBe(true);
+    if (customRes.success) {
+      expect(customRes.data.OPENAI_MODEL).toBe("gpt-4o-mini");
+    }
+  });
+
+  it("defaults EMBEDDING_MODEL to gemini-embedding-2 and allows custom model", () => {
+    const defaultRes = EnvSchema.safeParse(baseValidEnv);
+    expect(defaultRes.success).toBe(true);
+    if (defaultRes.success) {
+      expect(defaultRes.data.EMBEDDING_MODEL).toBe("gemini-embedding-2");
+    }
+
+    const customRes = EnvSchema.safeParse({
+      ...baseValidEnv,
+      EMBEDDING_MODEL: "text-embedding-custom",
+    });
+    expect(customRes.success).toBe(true);
+    if (customRes.success) {
+      expect(customRes.data.EMBEDDING_MODEL).toBe("text-embedding-custom");
+    }
+  });
 });

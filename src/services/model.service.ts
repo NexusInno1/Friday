@@ -1,7 +1,7 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
-import { DEFAULT_GEMINI_MODEL, DEFAULT_GROQ_MODEL, env } from "../config/env.js";
+import { DEFAULT_GEMINI_MODEL, DEFAULT_GROQ_MODEL, DEFAULT_OPENAI_MODEL, env } from "../config/env.js";
 
 const RETIRED_GEMINI_MODELS = new Set([
   "gemini-2.0-flash",
@@ -36,6 +36,7 @@ export function getModel(providerOverride?: "gemini" | "groq" | "openai"): Langu
     DEFAULT_LLM_PROVIDER,
     GEMINI_API_KEY,
     OPENAI_API_KEY,
+    OPENAI_MODEL,
     GROQ_API_KEY,
     GEMINI_MODEL,
     GROQ_MODEL,
@@ -52,7 +53,8 @@ export function getModel(providerOverride?: "gemini" | "groq" | "openai"): Langu
 
   if (provider === "openai" && OPENAI_API_KEY) {
     const openai = createOpenAI({ apiKey: OPENAI_API_KEY });
-    return openai("gpt-4o");
+    const modelId = OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+    return openai(modelId);
   }
 
   const google = createGoogleGenerativeAI({ apiKey: GEMINI_API_KEY });
@@ -65,7 +67,7 @@ export function getModel(providerOverride?: "gemini" | "groq" | "openai"): Langu
  * 2. OpenAI (gpt-4o) if OPENAI_API_KEY is configured
  */
 export function getFallbackChain(primaryProvider?: string): FallbackModelDescriptor[] {
-  const { DEFAULT_LLM_PROVIDER, OPENAI_API_KEY, GROQ_API_KEY, GROQ_MODEL } = env();
+  const { DEFAULT_LLM_PROVIDER, OPENAI_API_KEY, OPENAI_MODEL, GROQ_API_KEY, GROQ_MODEL } = env();
   const primary = primaryProvider ?? DEFAULT_LLM_PROVIDER;
   const fallbacks: FallbackModelDescriptor[] = [];
 
@@ -85,10 +87,11 @@ export function getFallbackChain(primaryProvider?: string): FallbackModelDescrip
   // Tier 3: OpenAI (if key present and not primary)
   if (primary !== "openai" && OPENAI_API_KEY) {
     const openai = createOpenAI({ apiKey: OPENAI_API_KEY });
+    const modelName = OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
     fallbacks.push({
       provider: "OpenAI",
-      modelName: "gpt-4o",
-      model: openai("gpt-4o"),
+      modelName,
+      model: openai(modelName),
     });
   }
 

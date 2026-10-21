@@ -91,3 +91,48 @@ export function getEndOfDayISO(timezone: string, baseDate: Date = new Date()): s
   const exactUtcMs = targetUtcEstimate - offsetMs;
   return new Date(exactUtcMs).toISOString();
 }
+
+/**
+ * Computes the ISO string representing HH:MM:00.000 in the target timezone for a given date.
+ */
+export function getTargetTimeISO(timeStr: string, timezone: string, baseDate: Date = new Date()): string {
+  const [targetHour, targetMinute] = timeStr.split(":").map(Number);
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  const parts = formatter.formatToParts(baseDate);
+  const year = parseInt(parts.find((p) => p.type === "year")!.value, 10);
+  const month = parseInt(parts.find((p) => p.type === "month")!.value, 10);
+  const day = parseInt(parts.find((p) => p.type === "day")!.value, 10);
+
+  const targetUtcEstimate = Date.UTC(year, month - 1, day, targetHour, targetMinute, 0, 0);
+
+  const tzFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+
+  const tzParts = tzFormatter.formatToParts(new Date(targetUtcEstimate));
+  const tzYear = parseInt(tzParts.find((p) => p.type === "year")!.value, 10);
+  const tzMonth = parseInt(tzParts.find((p) => p.type === "month")!.value, 10);
+  const tzDay = parseInt(tzParts.find((p) => p.type === "day")!.value, 10);
+  const tzHour = parseInt(tzParts.find((p) => p.type === "hour")!.value, 10);
+  const tzMinute = parseInt(tzParts.find((p) => p.type === "minute")!.value, 10);
+  const tzSecond = parseInt(tzParts.find((p) => p.type === "second")!.value, 10);
+
+  const tzAsUtcMs = Date.UTC(tzYear, tzMonth - 1, tzDay, tzHour, tzMinute, tzSecond, 0);
+  const offsetMs = tzAsUtcMs - targetUtcEstimate;
+
+  const exactUtcMs = targetUtcEstimate - offsetMs;
+  return new Date(exactUtcMs).toISOString();
+}

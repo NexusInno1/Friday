@@ -66,8 +66,10 @@ export interface DataStore {
     content: string,
     tags: string[],
     importance: number,
-    embedding: number[] | null
+    embedding: number[] | null,
+    source?: "user" | "web" | "system"
   ): Promise<Memory>;
+  updateMemoryEmbedding(id: string, embedding: number[] | null): Promise<void>;
   matchMemories(
     userId: number,
     queryEmbedding: number[],
@@ -103,6 +105,11 @@ export interface DataStore {
   updateReminder(id: string, updates: Partial<Reminder>): Promise<Reminder>;
   getTodayReminders(userId: number, endOfDayIso: string): Promise<Reminder[]>;
   getActiveReminderCount(userId?: number): Promise<number>;
+
+  // ─── Scheduled Briefings & Concurrency ─────────────────
+  claimDailyBriefing(userId: number, briefingDate: string, scheduledAtIso: string): Promise<boolean>;
+  markDailyBriefingSent(userId: number, briefingDate: string, modelUsed?: string): Promise<void>;
+  getLastBriefingDate(userId: number): Promise<string | null>;
 
   // ─── User Profile & Telemetry ──────────────────────────
   getUserProfile(userId: number): Promise<UserProfile | null>;

@@ -486,7 +486,8 @@ export class SupabaseDataStore implements DataStore {
     content: string,
     tags: string[],
     importance: number,
-    embedding: number[] | null
+    embedding: number[] | null,
+    source: "user" | "web" | "system" = "user"
   ): Promise<Memory> {
     const { data, error } = await this.db
       .from("memories")
@@ -496,6 +497,7 @@ export class SupabaseDataStore implements DataStore {
         tags,
         embedding,
         importance,
+        source,
       })
       .select()
       .single();
@@ -504,6 +506,17 @@ export class SupabaseDataStore implements DataStore {
       throw new Error(`Failed to store memory: ${error?.message ?? "unknown error"}`);
     }
     return data;
+  }
+
+  async updateMemoryEmbedding(id: string, embedding: number[] | null): Promise<void> {
+    const { error } = await this.db
+      .from("memories")
+      .update({ embedding, updated_at: new Date().toISOString() })
+      .eq("id", id);
+
+    if (error) {
+      throw new Error(`Failed to update memory embedding: ${error.message}`);
+    }
   }
 
   async matchMemories(
@@ -666,6 +679,7 @@ export class SupabaseDataStore implements DataStore {
       .lte("trigger_at", nowIso)
       .eq("is_completed", false)
       .eq("is_cancelled", false)
+      .is("sent_at", null)
       .or(`lease_until.is.null,lease_until.lt.${nowIso}`);
 
     if (findError) {
@@ -687,7 +701,8 @@ export class SupabaseDataStore implements DataStore {
           })
           .eq("id", reminder.id)
           .eq("is_completed", false)
-          .eq("is_cancelled", false);
+          .eq("is_cancelled", false)
+          .is("sent_at", null);
 
         if (reminder.lease_until === null) {
           updateQuery = updateQuery.is("lease_until", null);
@@ -719,9 +734,13 @@ export class SupabaseDataStore implements DataStore {
   }
 
   async updateReminder(id: string, updates: Partial<Reminder>): Promise<Reminder> {
+    const finalUpdates = { ...updates };
+    if (updates.is_completed && !finalUpdates.sent_at) {
+      finalUpdates.sent_at = new Date().toISOString();
+    }
     const { data, error } = await this.db
       .from("reminders")
-      .update(updates)
+      .update(finalUpdates)
       .eq("id", id)
       .select()
       .single();
@@ -761,6 +780,67 @@ export class SupabaseDataStore implements DataStore {
     }
     const { count } = await query;
     return count ?? 0;
+  }
+
+  // ─── Scheduled Briefings & Concurrency ─────────────────
+
+  async claimDailyBriefing(userId: number, briefingDate: string, scheduledAtIso: string): Promise<boolean> {
+    const nowIso = new Date().toISOString();
+    // 1. Try to insert new claim
+    const { data: inserted, error: insertError } = await this.db
+      .from("scheduled_briefings")
+      .insert({
+        user_id: userId,
+        briefing_date: briefingDate,
+        scheduled_at: scheduledAtIso,
+        claimed_at: nowIso,
+      })
+      .select()
+      .maybeSingle();
+
+    if (!insertError && inserted) {
+      return true;
+    }
+
+    // 2. If already exists, attempt atomic claim update where sent_at IS NULL and claimed_at expired
+    const twoMinutesAgoIso = new Date(Date.now() - 120_000).toISOString();
+    const { data: updated, error: updateError } = await this.db
+      .from("scheduled_briefings")
+      .update({ claimed_at: nowIso })
+      .eq("user_id", userId)
+      .eq("briefing_date", briefingDate)
+      .is("sent_at", null)
+      .or(`claimed_at.is.null,claimed_at.lt.${twoMinutesAgoIso}`)
+      .select()
+      .maybeSingle();
+
+    return !updateError && Boolean(updated);
+  }
+
+  async markDailyBriefingSent(userId: number, briefingDate: string, modelUsed?: string): Promise<void> {
+    const nowIso = new Date().toISOString();
+    await this.db
+      .from("scheduled_briefings")
+      .update({
+        sent_at: nowIso,
+        ...(modelUsed ? { model_used: modelUsed } : {}),
+      })
+      .eq("user_id", userId)
+      .eq("briefing_date", briefingDate);
+  }
+
+  async getLastBriefingDate(userId: number): Promise<string | null> {
+    const { data, error } = await this.db
+      .from("scheduled_briefings")
+      .select("briefing_date")
+      .eq("user_id", userId)
+      .not("sent_at", "is", null)
+      .order("briefing_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return (data as { briefing_date: string }).briefing_date;
   }
 
   // ─── User Profile & Telemetry ──────────────────────────

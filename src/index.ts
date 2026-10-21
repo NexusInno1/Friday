@@ -4,6 +4,7 @@ import { createBot } from "./bot/bot.js";
 import { initScheduler } from "./services/scheduler.service.js";
 import { startHealthServer } from "./health.js";
 import { webhookCallback } from "grammy";
+import { setAlertDispatcher } from "./services/alert.service.js";
 
 async function main() {
   console.log("🚀 Initializing FRIDAY AI Assistant...");
@@ -13,6 +14,19 @@ async function main() {
 
   // 2. Initialize Telegram Bot
   const bot = createBot();
+
+  // 3. Connect alert dispatcher for critical rate-limited Telegram alerts (Item 6)
+  setAlertDispatcher({
+    async sendAlert(message: string) {
+      await bot.api
+        .sendMessage(envConfig.TELEGRAM_ALLOWED_USER_ID, message, {
+          parse_mode: "Markdown",
+        })
+        .catch(async () => {
+          await bot.api.sendMessage(envConfig.TELEGRAM_ALLOWED_USER_ID, message);
+        });
+    },
+  });
 
   // 4. Initialize background scheduler (reminders & daily briefing)
   const scheduler = await initScheduler(bot);

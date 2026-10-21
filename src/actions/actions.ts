@@ -7,8 +7,10 @@ import { Cron } from "croner";
 
 import { generateText, type LanguageModel } from "ai";
 import { getModel } from "../services/model.service.js";
+import { sendCriticalAlert } from "../services/alert.service.js";
+import { checkAndIncrementUsage } from "../services/cost-tracker.service.js";
 
-export const EMBEDDING_MODEL = "text-embedding-004";
+export const EMBEDDING_MODEL = "gemini-embedding-2";
 const SUPERSEDE_THRESHOLD = 0.85;
 
 /**
@@ -23,6 +25,10 @@ export async function checkMemoryContradiction(
 ): Promise<boolean> {
   if (existingFact.trim().toLowerCase() === newFact.trim().toLowerCase()) {
     return true;
+  }
+
+  if (env().GEMINI_API_KEY === "mock_gemini_key" && !model) {
+    return false;
   }
 
   try {
@@ -47,17 +53,24 @@ Respond with ONLY: CONTRADICT or COMPATIBLE.`;
 }
 
 /**
- * Generates text embeddings using Google's text-embedding-004 model (768 dimensions).
+ * Generates text embeddings using Google's gemini-embedding-2 model (768 dimensions).
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const { GEMINI_API_KEY } = env();
+  const { GEMINI_API_KEY, EMBEDDING_MODEL: configuredModel } = env();
+  const activeModel = configuredModel || EMBEDDING_MODEL;
+
+  const isExplicitlyMocked = typeof (globalThis.fetch as any)?.mock !== "undefined";
+  if (GEMINI_API_KEY === "mock_gemini_key" && !isExplicitlyMocked) {
+    return new Array(768).fill(0.01);
+  }
+
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${EMBEDDING_MODEL}:embedContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:embedContent?key=${GEMINI_API_KEY}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: `models/${EMBEDDING_MODEL}`,
+        model: `models/${activeModel}`,
         content: { parts: [{ text }] },
         outputDimensionality: 768,
       }),
@@ -84,7 +97,8 @@ export async function rememberAction(
   tags: string[] = [],
   importance: number = 3,
   store: DataStore = getDataStore(),
-  userId: number = env().TELEGRAM_ALLOWED_USER_ID
+  userId: number = env().TELEGRAM_ALLOWED_USER_ID,
+  source: "user" | "web" | "system" = "user"
 ): Promise<Memory> {
   const trimmed = content.trim();
   if (!trimmed) {
@@ -95,7 +109,9 @@ export async function rememberAction(
   try {
     embedding = await generateEmbedding(trimmed);
   } catch (err) {
-    console.warn("[actions:memory] Failed to generate embedding, storing without vector:", err);
+    console.error("[actions:memory] CRITICAL: Failed to generate embedding for memory:", err);
+    await sendCriticalAlert("embedding_failure", err, { action: "rememberAction", text: trimmed.slice(0, 100) });
+    throw new Error(`Embedding generation failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // Conflict detection and superseding (ADR-0004 + AUDIT-006)
@@ -117,7 +133,7 @@ export async function rememberAction(
     }
   }
 
-  const memory = await store.storeMemory(userId, trimmed, tags, importance, embedding);
+  const memory = await store.storeMemory(userId, trimmed, tags, importance, embedding, source);
 
   if (supersededIds.length > 0 && memory) {
     await store.markMemoriesSuperseded(supersededIds, memory.id);
@@ -136,17 +152,20 @@ export async function recallMemoriesAction(
   if (!trimmed) return [];
 
   // Try semantic search first
+  let matches: Memory[] = [];
   try {
     const embedding = await generateEmbedding(trimmed);
-    const matches = await store.matchMemories(userId, embedding, 0.7, limit);
+    matches = await store.matchMemories(userId, embedding, 0.7, limit);
     if (matches.length > 0) {
       return matches;
     }
   } catch (err) {
-    console.warn("[actions:memory] Semantic search failed, falling back to keyword search:", err);
+    console.error("[actions:memory] CRITICAL: Embedding failure during recall:", err);
+    await sendCriticalAlert("embedding_failure", err, { action: "recallMemoriesAction", query: trimmed });
+    throw new Error(`Embedding recall failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Fallback to keyword search
+  // Fallback to keyword search only when semantic search succeeded but found 0 matches
   return store.searchMemoriesKeyword(userId, trimmed, limit);
 }
 
@@ -178,6 +197,14 @@ export async function webSearchAction(
   const trimmed = query.trim();
   if (!trimmed) {
     throw new Error("Search query cannot be empty.");
+  }
+
+  const usageCheck = await checkAndIncrementUsage("tavily");
+  if (!usageCheck.allowed) {
+    return {
+      answer: usageCheck.error ?? "Daily web search limit reached. Search is paused until tomorrow.",
+      results: [],
+    };
   }
 
   const options: WebSearchOptions =

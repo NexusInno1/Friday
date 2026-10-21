@@ -8,6 +8,7 @@ import type {
   Json,
   ConversationSession,
   HistorySearchResult,
+  ScheduledBriefing,
 } from "./schema.js";
 import type { DataStore } from "./datastore.js";
 import crypto from "crypto";
@@ -34,6 +35,7 @@ export class InMemoryDataStore implements DataStore {
   messages: Map<string, Message> = new Map();
   memories: Map<string, Memory> = new Map();
   reminders: Map<string, Reminder> = new Map();
+  scheduledBriefings: Map<string, ScheduledBriefing> = new Map();
   userProfiles: Map<number, UserProfile> = new Map();
   lastClearedAt: Map<number, number> = new Map();
   activityLogs: Array<{
@@ -452,7 +454,8 @@ export class InMemoryDataStore implements DataStore {
     content: string,
     tags: string[],
     importance: number,
-    embedding: number[] | null
+    embedding: number[] | null,
+    source: "user" | "web" | "system" = "user"
   ): Promise<Memory> {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -465,11 +468,20 @@ export class InMemoryDataStore implements DataStore {
       importance,
       is_active: true,
       superseded_by: null,
+      source,
       created_at: now,
       updated_at: now,
     };
     this.memories.set(id, memory);
     return memory;
+  }
+
+  async updateMemoryEmbedding(id: string, embedding: number[] | null): Promise<void> {
+    const memory = this.memories.get(id);
+    if (memory) {
+      memory.embedding = embedding;
+      memory.updated_at = new Date().toISOString();
+    }
   }
 
   async matchMemories(
@@ -594,7 +606,7 @@ export class InMemoryDataStore implements DataStore {
     const claimed: Reminder[] = [];
 
     for (const reminder of this.reminders.values()) {
-      if (reminder.is_completed || reminder.is_cancelled) continue;
+      if (reminder.is_completed || reminder.is_cancelled || reminder.sent_at) continue;
       const triggerTime = new Date(reminder.trigger_at).getTime();
       if (triggerTime > nowTime) continue;
 
@@ -623,6 +635,9 @@ export class InMemoryDataStore implements DataStore {
     const r = this.reminders.get(id);
     if (!r) throw new Error("Reminder not found");
     const updated = { ...r, ...updates };
+    if (updates.is_completed && !updated.sent_at) {
+      updated.sent_at = new Date().toISOString();
+    }
     this.reminders.set(id, updated);
     return updated;
   }
@@ -648,6 +663,51 @@ export class InMemoryDataStore implements DataStore {
       }
     }
     return count;
+  }
+
+  // ─── Scheduled Briefings & Concurrency ─────────────────
+
+  async claimDailyBriefing(userId: number, briefingDate: string, scheduledAtIso: string): Promise<boolean> {
+    const key = `${userId}:${briefingDate}`;
+    const existing = this.scheduledBriefings.get(key);
+    if (existing?.sent_at) {
+      return false;
+    }
+    const now = new Date().toISOString();
+    if (existing?.claimed_at) {
+      const claimedTime = new Date(existing.claimed_at).getTime();
+      if (Date.now() - claimedTime < 120_000) {
+        return false;
+      }
+    }
+
+    this.scheduledBriefings.set(key, {
+      id: existing?.id ?? crypto.randomUUID(),
+      user_id: userId,
+      briefing_date: briefingDate,
+      scheduled_at: scheduledAtIso,
+      claimed_at: now,
+      sent_at: existing?.sent_at ?? null,
+      model_used: existing?.model_used ?? null,
+      created_at: existing?.created_at ?? now,
+    });
+    return true;
+  }
+
+  async markDailyBriefingSent(userId: number, briefingDate: string, modelUsed?: string): Promise<void> {
+    const key = `${userId}:${briefingDate}`;
+    const existing = this.scheduledBriefings.get(key);
+    if (existing) {
+      existing.sent_at = new Date().toISOString();
+      if (modelUsed) existing.model_used = modelUsed;
+    }
+  }
+
+  async getLastBriefingDate(userId: number): Promise<string | null> {
+    const sent = Array.from(this.scheduledBriefings.values())
+      .filter((b) => b.user_id === userId && b.sent_at !== null)
+      .sort((a, b) => b.briefing_date.localeCompare(a.briefing_date));
+    return sent.length > 0 ? sent[0].briefing_date : null;
   }
 
   // ─── User Profile & Telemetry ──────────────────────────

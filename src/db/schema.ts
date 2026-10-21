@@ -114,6 +114,7 @@ export interface Database {
           importance: number;
           is_active: boolean;
           superseded_by: string | null;
+          source?: "user" | "web" | "system";
           created_at: string;
           updated_at: string;
         };
@@ -126,6 +127,7 @@ export interface Database {
           importance?: number;
           is_active?: boolean;
           superseded_by?: string | null;
+          source?: "user" | "web" | "system";
           created_at?: string;
           updated_at?: string;
         };
@@ -138,6 +140,7 @@ export interface Database {
           importance?: number;
           is_active?: boolean;
           superseded_by?: string | null;
+          source?: "user" | "web" | "system";
           created_at?: string;
           updated_at?: string;
         };
@@ -156,6 +159,7 @@ export interface Database {
           lease_until: string | null;
           delivery_attempts: number;
           telegram_chat_id: number;
+          sent_at?: string | null;
           created_at: string;
         };
         Insert: {
@@ -170,6 +174,7 @@ export interface Database {
           lease_until?: string | null;
           delivery_attempts?: number;
           telegram_chat_id: number;
+          sent_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -184,6 +189,40 @@ export interface Database {
           lease_until?: string | null;
           delivery_attempts?: number;
           telegram_chat_id?: number;
+          sent_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      scheduled_briefings: {
+        Row: {
+          id: string;
+          user_id: number;
+          briefing_date: string;
+          scheduled_at: string;
+          claimed_at: string | null;
+          sent_at: string | null;
+          model_used: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: number;
+          briefing_date: string;
+          scheduled_at: string;
+          claimed_at?: string | null;
+          sent_at?: string | null;
+          model_used?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: number;
+          briefing_date?: string;
+          scheduled_at?: string;
+          claimed_at?: string | null;
+          sent_at?: string | null;
+          model_used?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -234,6 +273,7 @@ export interface Database {
           importance: number;
           is_active: boolean;
           superseded_by: string | null;
+          source?: "user" | "web" | "system";
           created_at: string;
           updated_at: string;
           similarity: number;
@@ -248,6 +288,7 @@ export type Conversation = Database["public"]["Tables"]["conversations"]["Row"];
 export type Message = Database["public"]["Tables"]["messages"]["Row"];
 export type Memory = Database["public"]["Tables"]["memories"]["Row"];
 export type Reminder = Database["public"]["Tables"]["reminders"]["Row"];
+export type ScheduledBriefing = Database["public"]["Tables"]["scheduled_briefings"]["Row"];
 export type ActivityLog = Database["public"]["Tables"]["activity_logs"]["Row"];
 
 export interface ConversationSession {
