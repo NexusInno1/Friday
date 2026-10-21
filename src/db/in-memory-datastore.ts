@@ -6,6 +6,8 @@ import type {
   UserProfile,
   MessageRole,
   Json,
+  ConversationSession,
+  HistorySearchResult,
 } from "./schema.js";
 import type { DataStore } from "./datastore.js";
 import crypto from "crypto";
@@ -47,10 +49,22 @@ export class InMemoryDataStore implements DataStore {
 
   async getOrCreateConversation(chatId: number): Promise<string> {
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    let latestActiveConv: Conversation | null = null;
+
     for (const conv of this.conversations.values()) {
-      if (conv.telegram_chat_id === chatId && conv.updated_at >= cutoff) {
-        return conv.id;
+      if (
+        conv.telegram_chat_id === chatId &&
+        conv.is_active !== false &&
+        conv.updated_at >= cutoff
+      ) {
+        if (!latestActiveConv || conv.updated_at > latestActiveConv.updated_at) {
+          latestActiveConv = conv;
+        }
       }
+    }
+
+    if (latestActiveConv) {
+      return latestActiveConv.id;
     }
 
     const id = crypto.randomUUID();
@@ -58,6 +72,9 @@ export class InMemoryDataStore implements DataStore {
     const newConv: Conversation = {
       id,
       telegram_chat_id: chatId,
+      title: null,
+      summary: null,
+      is_active: true,
       created_at: now,
       updated_at: now,
     };
@@ -100,8 +117,15 @@ export class InMemoryDataStore implements DataStore {
     limit = 20
   ): Promise<Array<{ role: MessageRole; content: string }>> {
     const currentConv = this.conversations.get(conversationId);
+    const chatId = currentConv?.telegram_chat_id;
+    const clearedTime = chatId ? (this.lastClearedAt.get(chatId) ?? 0) : 0;
+
     const relevant = Array.from(this.messages.values())
-      .filter((m) => m.conversation_id === conversationId)
+      .filter((m) => {
+        if (m.conversation_id !== conversationId) return false;
+        if (clearedTime > 0 && new Date(m.created_at).getTime() <= clearedTime) return false;
+        return true;
+      })
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
     // Bridge prior conversation if active session has fewer than limit messages
@@ -140,24 +164,9 @@ export class InMemoryDataStore implements DataStore {
   }
 
   async clearConversation(chatId: number, userId?: number): Promise<void> {
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    let activeConvId: string | null = null;
-    let latestUpdatedAt = "";
-
     for (const conv of this.conversations.values()) {
-      if (conv.telegram_chat_id === chatId && conv.updated_at >= cutoff) {
-        if (!latestUpdatedAt || conv.updated_at > latestUpdatedAt) {
-          latestUpdatedAt = conv.updated_at;
-          activeConvId = conv.id;
-        }
-      }
-    }
-
-    if (!activeConvId) return;
-
-    for (const [id, msg] of this.messages.entries()) {
-      if (msg.conversation_id === activeConvId) {
-        this.messages.delete(id);
+      if (conv.telegram_chat_id === chatId && conv.is_active !== false) {
+        conv.is_active = false;
       }
     }
 
@@ -166,6 +175,210 @@ export class InMemoryDataStore implements DataStore {
     if (userId) {
       await this.logActivity(userId, "conversation_cleared", { chat_id: chatId });
     }
+  }
+
+  // ─── Sessions & History Search ─────────────────────────
+
+  async listSessions(chatId: number, limit = 10): Promise<ConversationSession[]> {
+    const sessions: ConversationSession[] = [];
+    for (const conv of this.conversations.values()) {
+      if (conv.telegram_chat_id === chatId) {
+        let messageCount = 0;
+        for (const msg of this.messages.values()) {
+          if (msg.conversation_id === conv.id) {
+            messageCount++;
+          }
+        }
+        sessions.push({
+          id: conv.id,
+          telegramChatId: conv.telegram_chat_id,
+          title: conv.title ?? null,
+          summary: conv.summary ?? null,
+          isActive: conv.is_active !== false,
+          messageCount,
+          createdAt: conv.created_at,
+          updatedAt: conv.updated_at,
+        });
+      }
+    }
+
+    return sessions
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, limit);
+  }
+
+  async getActiveSession(chatId: number): Promise<ConversationSession | null> {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    let latest: Conversation | null = null;
+
+    for (const conv of this.conversations.values()) {
+      if (
+        conv.telegram_chat_id === chatId &&
+        conv.is_active !== false &&
+        conv.updated_at >= cutoff
+      ) {
+        if (!latest || conv.updated_at > latest.updated_at) {
+          latest = conv;
+        }
+      }
+    }
+
+    if (!latest) return null;
+
+    let messageCount = 0;
+    for (const msg of this.messages.values()) {
+      if (msg.conversation_id === latest.id) {
+        messageCount++;
+      }
+    }
+
+    return {
+      id: latest.id,
+      telegramChatId: latest.telegram_chat_id,
+      title: latest.title ?? null,
+      summary: latest.summary ?? null,
+      isActive: true,
+      messageCount,
+      createdAt: latest.created_at,
+      updatedAt: latest.updated_at,
+    };
+  }
+
+  async switchActiveSession(
+    chatId: number,
+    targetConversationId: string
+  ): Promise<ConversationSession> {
+    const target = this.conversations.get(targetConversationId);
+    if (!target || target.telegram_chat_id !== chatId) {
+      throw new Error(`Session ${targetConversationId} not found for chat ${chatId}`);
+    }
+
+    // Deactivate currently active sessions for this chat
+    for (const conv of this.conversations.values()) {
+      if (conv.telegram_chat_id === chatId) {
+        conv.is_active = false;
+      }
+    }
+
+    // Activate target session and touch updatedAt
+    target.is_active = true;
+    target.updated_at = new Date().toISOString();
+
+    let messageCount = 0;
+    for (const msg of this.messages.values()) {
+      if (msg.conversation_id === target.id) {
+        messageCount++;
+      }
+    }
+
+    return {
+      id: target.id,
+      telegramChatId: target.telegram_chat_id,
+      title: target.title ?? null,
+      summary: target.summary ?? null,
+      isActive: true,
+      messageCount,
+      createdAt: target.created_at,
+      updatedAt: target.updated_at,
+    };
+  }
+
+  async updateSessionTitle(conversationId: string, title: string): Promise<void> {
+    const conv = this.conversations.get(conversationId);
+    if (!conv) {
+      throw new Error(`Session ${conversationId} not found`);
+    }
+    conv.title = title.trim();
+    conv.updated_at = new Date().toISOString();
+  }
+
+  async archiveSession(chatId: number): Promise<void> {
+    for (const conv of this.conversations.values()) {
+      if (conv.telegram_chat_id === chatId && conv.is_active !== false) {
+        conv.is_active = false;
+      }
+    }
+  }
+
+  async deleteSession(conversationId: string): Promise<void> {
+    this.conversations.delete(conversationId);
+    for (const [id, msg] of this.messages.entries()) {
+      if (msg.conversation_id === conversationId) {
+        this.messages.delete(id);
+      }
+    }
+  }
+
+  async getSessionMessages(
+    conversationId: string,
+    limit = 50
+  ): Promise<Array<{ id: string; role: MessageRole; content: string; created_at: string }>> {
+    const list: Array<{ id: string; role: MessageRole; content: string; created_at: string }> = [];
+    for (const msg of this.messages.values()) {
+      if (msg.conversation_id === conversationId) {
+        list.push({
+          id: msg.id,
+          role: msg.role,
+          content: msg.content,
+          created_at: msg.created_at,
+        });
+      }
+    }
+    return list
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      .slice(-limit);
+  }
+
+  async searchMessageHistory(
+    chatId: number,
+    query: string,
+    options?: { limit?: number; conversationId?: string }
+  ): Promise<HistorySearchResult[]> {
+    const limit = options?.limit ?? 10;
+    const qLower = query.toLowerCase().trim();
+    const qWords = qLower.split(/\s+/).filter((w) => w.length > 0);
+    const results: HistorySearchResult[] = [];
+
+    // Filter relevant conversation IDs for this chat
+    const validConvIds = new Set<string>();
+    for (const conv of this.conversations.values()) {
+      if (conv.telegram_chat_id === chatId) {
+        if (!options?.conversationId || conv.id === options.conversationId) {
+          validConvIds.add(conv.id);
+        }
+      }
+    }
+
+    for (const msg of this.messages.values()) {
+      if (!validConvIds.has(msg.conversation_id)) continue;
+
+      const contentLower = msg.content.toLowerCase();
+      // Match full query or any word
+      const matchesFull = contentLower.includes(qLower);
+      const matchedWords = qWords.filter((w) => contentLower.includes(w)).length;
+
+      if (matchesFull || matchedWords > 0) {
+        const conv = this.conversations.get(msg.conversation_id);
+        const score = matchesFull ? 1.0 : matchedWords / Math.max(qWords.length, 1);
+        results.push({
+          messageId: msg.id,
+          conversationId: msg.conversation_id,
+          sessionTitle: conv?.title ?? null,
+          role: msg.role,
+          content: msg.content,
+          createdAt: msg.created_at,
+          similarity: score,
+        });
+      }
+    }
+
+    return results
+      .sort((a, b) => {
+        const scoreDiff = (b.similarity ?? 0) - (a.similarity ?? 0);
+        if (Math.abs(scoreDiff) > 0.001) return scoreDiff;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      })
+      .slice(0, limit);
   }
 
   async getOldMessages(

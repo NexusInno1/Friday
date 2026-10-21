@@ -262,6 +262,35 @@ export function createTools(context?: ToolContext) {
     },
   });
 
+  const searchConversationHistoryScopedTool = tool({
+    description:
+      "Search previous conversation history, past discussions, decisions, and chat transcripts with the user. " +
+      "Use when the user asks about prior discussions, past topics, or previously discussed code, links, or plans.",
+    parameters: z.object({
+      query: z.string().describe("The topic, question, or keyword to look up in past conversations"),
+      limit: z
+        .number()
+        .optional()
+        .default(5)
+        .describe("Maximum number of historical excerpts to retrieve"),
+    }),
+    execute: async ({ query, limit }) => {
+      const results = await store.searchMessageHistory(targetChatId, query, { limit: limit ?? 5 });
+      if (results.length === 0) {
+        return { found: false, matches: [] };
+      }
+      return {
+        found: true,
+        matches: results.map((r) => ({
+          session_title: r.sessionTitle ?? "Untitled Session",
+          role: r.role,
+          content: r.content,
+          date: r.createdAt,
+        })),
+      };
+    },
+  });
+
   return {
     web_search: webSearchTool,
     store_memory: storeMemoryScopedTool,
@@ -271,5 +300,6 @@ export function createTools(context?: ToolContext) {
     cancel_reminder: cancelReminderScopedTool,
     snooze_reminder: snoozeReminderScopedTool,
     set_briefing_time: setBriefingTimeScopedTool,
+    search_conversation_history: searchConversationHistoryScopedTool,
   };
 }

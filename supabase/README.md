@@ -21,8 +21,8 @@ FRIDAY uses **Supabase** (PostgreSQL with `pgvector`) to store:
 
 1. In your Supabase project dashboard, open the **SQL Editor** from the left navigation.
 2. Click **"New query"**.
-3. For a **new project**, apply [`schema.sql`](./schema.sql), which is the complete corrected schema. Alternatively, apply the numbered migrations in order: `001_add_memory_superseding.sql`, `002_fix_match_memories_rpc.sql`, then `003_add_reminder_leases.sql`.
-4. For an **existing FRIDAY database**, do not re-run the initial schema. Apply [`migrations/001_add_memory_superseding.sql`](./migrations/001_add_memory_superseding.sql) if it has not already been applied, then [`migrations/002_fix_match_memories_rpc.sql`](./migrations/002_fix_match_memories_rpc.sql) and [`migrations/003_add_reminder_leases.sql`](./migrations/003_add_reminder_leases.sql).
+3. For a **new project**, apply [`schema.sql`](./schema.sql), which is the complete corrected schema. Alternatively, apply the numbered migrations in order: `001_add_memory_superseding.sql`, `002_fix_match_memories_rpc.sql`, `003_add_reminder_leases.sql`, then `004_add_session_metadata_and_search.sql`.
+4. For an **existing FRIDAY database**, do not re-run the initial schema. Apply [`migrations/001_add_memory_superseding.sql`](./migrations/001_add_memory_superseding.sql) if it has not already been applied, then [`migrations/002_fix_match_memories_rpc.sql`](./migrations/002_fix_match_memories_rpc.sql), [`migrations/003_add_reminder_leases.sql`](./migrations/003_add_reminder_leases.sql), and [`migrations/004_add_session_metadata_and_search.sql`](./migrations/004_add_session_metadata_and_search.sql).
 5. Click **"Run"** (or press `Ctrl+Enter`) after each migration.
 
 `schema.sql` remains the complete reference schema for new provisioning. The numbered migrations are the authoritative path for an existing deployment. You should see `Success. No rows returned` after each SQL script.
@@ -32,6 +32,7 @@ This will:
 - Create all 5 required tables (`user_profiles`, `conversations`, `messages`, `memories`, `reminders`, `activity_logs`)
 - Create the HNSW index for sub-millisecond semantic search
 - Create the `match_memories` PostgreSQL vector similarity function
+- Configure full-text search indexes on messages and session active state lookups
 
 ---
 

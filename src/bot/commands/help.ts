@@ -16,7 +16,9 @@ Simply send any natural language message:
 • \`/remember <note>\` — Explicitly store a memory or fact
 • \`/memories [query]\` — View, search, and manage stored memories
 • \`/search <query>\` — Instant web search with citations
-• \`/clear\` — Clear current conversation context window
+• \`/sessions\` — View and switch between conversation threads
+• \`/history [query]\` — Search past conversation transcripts and decisions
+• \`/clear\` — Archive current session and start a fresh thread
 • \`/status\` — View model, provider, timezone, and memory stats
 • \`/help\` — Display this guide
 

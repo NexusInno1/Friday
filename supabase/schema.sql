@@ -26,11 +26,15 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 CREATE TABLE IF NOT EXISTS conversations (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   telegram_chat_id BIGINT NOT NULL,
+  title           TEXT,
+  summary         TEXT,
+  is_active       BOOLEAN NOT NULL DEFAULT TRUE,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_chat_id ON conversations(telegram_chat_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_active_lookup ON conversations(telegram_chat_id, is_active, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS messages (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -45,6 +49,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_content_fts ON messages USING gin(to_tsvector('english', content));
 
 -- ============================================================
 -- MEMORIES (with pgvector for semantic search)

@@ -13,6 +13,7 @@ import {
   isRetriableModelError,
   type FallbackModelDescriptor,
 } from "./model.service.js";
+import { maybeAutoTitleSession } from "./session.service.js";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_STEPS = 10;
@@ -195,6 +196,11 @@ export class AssistantEngine {
     // 8. Persist assistant response with token metrics
     await this.store.saveMessage(conversationId, "assistant", responseText, {
       tokensUsed,
+    });
+
+    // 9. Asynchronously auto-title conversation session if untitled
+    void maybeAutoTitleSession(conversationId, this.store).catch((err) => {
+      console.warn("[agent:session] Background auto-titling error:", err);
     });
 
     return responseText;
