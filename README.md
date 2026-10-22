@@ -62,7 +62,7 @@ Fill in your credentials in `.env`:
 TELEGRAM_BOT_TOKEN="your-bot-token-from-botfather"
 TELEGRAM_ALLOWED_USER_ID="your-numeric-user-id"
 GEMINI_API_KEY="your-gemini-api-key"
-GEMINI_MODEL="gemini-3.6-flash"
+GEMINI_MODEL="gemini-3.5-flash-lite"
 TAVILY_API_KEY="your-tavily-api-key"
 SUPABASE_URL="https://your-project.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
