@@ -39,6 +39,17 @@ export class SupabaseDataStore implements DataStore {
 
     if (existing) return existing.id;
 
+    // Atomically deactivate older active sessions for this chat
+    const { error: deactivateError } = await this.db
+      .from("conversations")
+      .update({ is_active: false })
+      .eq("telegram_chat_id", chatId)
+      .eq("is_active", true);
+
+    if (deactivateError) {
+      console.warn("[supabase-store] Error deactivating older sessions:", deactivateError.message);
+    }
+
     const { data, error } = await this.db
       .from("conversations")
       .insert({
@@ -49,6 +60,20 @@ export class SupabaseDataStore implements DataStore {
       .single();
 
     if (error || !data) {
+      // If unique constraint was hit due to concurrent insertion, re-fetch the active conversation
+      const { data: retryExisting } = await this.db
+        .from("conversations")
+        .select("id")
+        .eq("telegram_chat_id", chatId)
+        .eq("is_active", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (retryExisting) {
+        return retryExisting.id;
+      }
+
       throw new Error(`Failed to create conversation: ${error?.message ?? "unknown error"}`);
     }
     return data.id;
@@ -92,6 +117,7 @@ export class SupabaseDataStore implements DataStore {
       .from("messages")
       .select("role, content")
       .eq("conversation_id", conversationId)
+      .is("compacted_at", null)
       .order("created_at", { ascending: false })
       .limit(limit);
 
@@ -140,7 +166,8 @@ export class SupabaseDataStore implements DataStore {
           let query = this.db
             .from("messages")
             .select("role, content")
-            .eq("conversation_id", priorConv.id);
+            .eq("conversation_id", priorConv.id)
+            .is("compacted_at", null);
 
           if (lastClear?.created_at) {
             query = query.gt("created_at", lastClear.created_at);
@@ -232,6 +259,34 @@ export class SupabaseDataStore implements DataStore {
       .gte("updated_at", cutoff)
       .order("updated_at", { ascending: false })
       .limit(1)
+      .maybeSingle();
+
+    if (error || !data) {
+      return null;
+    }
+
+    const { count } = await this.db
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", data.id);
+
+    return {
+      id: data.id,
+      telegramChatId: data.telegram_chat_id,
+      title: data.title,
+      summary: data.summary,
+      isActive: data.is_active,
+      messageCount: count ?? 0,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  async getSession(conversationId: string): Promise<ConversationSession | null> {
+    const { data, error } = await this.db
+      .from("conversations")
+      .select("id, telegram_chat_id, title, summary, is_active, created_at, updated_at")
+      .eq("id", conversationId)
       .maybeSingle();
 
     if (error || !data) {
@@ -408,6 +463,7 @@ export class SupabaseDataStore implements DataStore {
     const { data, error } = await this.db
       .from("messages")
       .select("conversation_id")
+      .is("compacted_at", null)
       .lt("created_at", cutoffDateIso)
       .order("created_at", { ascending: true })
       .limit(limit * 10);
@@ -438,6 +494,7 @@ export class SupabaseDataStore implements DataStore {
       .from("messages")
       .select("id, role, content, created_at")
       .eq("conversation_id", conversationId)
+      .is("compacted_at", null)
       .lt("created_at", cutoffDateIso)
       .order("created_at", { ascending: true })
       .limit(limit);
@@ -474,6 +531,20 @@ export class SupabaseDataStore implements DataStore {
 
     if (error) {
       console.error("[supabase-store] Failed to delete messages by IDs:", error.message);
+      return 0;
+    }
+    return count ?? 0;
+  }
+
+  async markMessagesCompacted(messageIds: string[]): Promise<number> {
+    if (messageIds.length === 0) return 0;
+    const { count, error } = await this.db
+      .from("messages")
+      .update({ compacted_at: new Date().toISOString() }, { count: "exact" })
+      .in("id", messageIds);
+
+    if (error) {
+      console.error("[supabase-store] Failed to mark messages compacted:", error.message);
       return 0;
     }
     return count ?? 0;

@@ -1,8 +1,10 @@
+import { z } from "zod";
 import { getDataStore } from "../db/datastore-provider.js";
 import { rememberAction } from "../actions/actions.js";
 import { getModel } from "./model.service.js";
 import { generateText } from "ai";
 import type { DataStore } from "../db/datastore.js";
+import { checkAndIncrementUsage } from "./cost-tracker.service.js";
 
 /**
  * ADR-0006: Rolling 30-Day Message Retention with Fact Compaction
@@ -10,7 +12,7 @@ import type { DataStore } from "../db/datastore.js";
  * This service runs as a daily cron job to:
  * 1. Extract durable facts from conversations older than 30 days
  * 2. Store extracted facts as atomic memories
- * 3. Delete the raw messages after compaction
+ * 3. Delete or soft-delete raw messages after compaction
  */
 
 const RETENTION_DAYS = 30;
@@ -36,16 +38,69 @@ Rules:
 Respond with ONLY a JSON array, no markdown fencing:
 [{"content": "fact statement", "importance": 3, "tags": ["category"]}]`;
 
+export const FactItemSchema = z
+  .object({
+    content: z.string().optional(),
+    fact: z.string().optional(),
+    statement: z.string().optional(),
+    importance: z.union([z.number(), z.string()]).nullish(),
+    tags: z.union([z.array(z.string()), z.string()]).nullish(),
+  })
+  .transform((val, ctx) => {
+    const content = (val.content ?? val.fact ?? val.statement)?.trim();
+    if (!content) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Fact must have non-empty content",
+      });
+      return z.NEVER;
+    }
+
+    let parsedImportance = 3;
+    if (val.importance !== undefined && val.importance !== null) {
+      const num = typeof val.importance === "number" ? val.importance : parseFloat(val.importance);
+      if (!isNaN(num)) {
+        parsedImportance = Math.min(5, Math.max(1, Math.round(num)));
+      }
+    }
+
+    let parsedTags: string[] = [];
+    if (Array.isArray(val.tags)) {
+      parsedTags = val.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+    } else if (typeof val.tags === "string" && val.tags.trim().length > 0) {
+      parsedTags = val.tags.split(",").map((t) => t.trim()).filter(Boolean);
+    }
+
+    return {
+      content,
+      importance: parsedImportance,
+      tags: parsedTags,
+    };
+  });
+
+export const FactExtractionResponseSchema = z.union([
+  z.array(FactItemSchema),
+  z
+    .object({
+      facts: z.array(FactItemSchema),
+    })
+    .transform((val) => val.facts),
+]);
+
+export type ExtractedFact = z.infer<typeof FactItemSchema>;
+
 export type FactExtractor = (
   messages: Array<{ id: string; role: string; content: string; created_at: string }>
 ) => Promise<{
   success: boolean;
   facts: Array<{ content: string; importance: number; tags: string[] }>;
+  abortedDueToQuota?: boolean;
 }>;
 
 export async function runFactCompaction(
   store: DataStore = getDataStore(),
-  extractor: FactExtractor = extractFacts
+  extractor: FactExtractor = extractFacts,
+  options?: { softDelete?: boolean }
 ): Promise<{
   conversationsProcessed: number;
   factsExtracted: number;
@@ -85,11 +140,27 @@ export async function runFactCompaction(
 
       const extraction = await extractor(oldMessages);
 
+      if (extraction.abortedDueToQuota) {
+        console.warn(
+          `[compaction] Aborting compaction run: LLM usage limit reached while processing conversation ${conversationId}.`
+        );
+        break;
+      }
+
       if (!extraction.success) {
         const nextFailures = (conversationFailureCounts.get(conversationId) ?? 0) + 1;
         conversationFailureCounts.set(conversationId, nextFailures);
         console.error(
           `[compaction] Skipping message deletion for conversation ${conversationId} due to extraction failure (attempt ${nextFailures}/${MAX_EXTRACTION_FAILURES}).`
+        );
+        continue;
+      }
+
+      // In hard-delete mode, if messages exist but 0 facts were extracted, abort deletion to prevent silent message loss.
+      // In soft-delete mode, messages are preserved with compacted_at, so archiving them is non-destructive.
+      if (!options?.softDelete && extraction.facts.length === 0 && oldMessages.length > 0) {
+        console.warn(
+          `[compaction] Aborting hard-deletion for conversation ${conversationId}: 0 facts extracted from ${oldMessages.length} existing messages to prevent permanent message loss.`
         );
         continue;
       }
@@ -110,9 +181,7 @@ export async function runFactCompaction(
         }
       }
 
-      // Never delete source messages when a fact write failed. The batch will be
-      // retried while the source remains available (later deduplication/provenance
-      // can make successful partial writes idempotent).
+      // Never delete source messages when any fact write failed.
       if (!allFactsStored) {
         const nextFailures = (conversationFailureCounts.get(conversationId) ?? 0) + 1;
         conversationFailureCounts.set(conversationId, nextFailures);
@@ -122,9 +191,15 @@ export async function runFactCompaction(
         continue;
       }
 
-      // Safe batch deletion: Delete ONLY the exact message IDs that were extracted and processed
+      // Safe batch deletion / soft-deletion: Delete ONLY the exact message IDs that were extracted and processed
       const extractedMessageIds = oldMessages.map((m) => m.id);
-      const deletedCount = await store.deleteMessagesByIds(extractedMessageIds);
+      let deletedCount = 0;
+      if (options?.softDelete && typeof store.markMessagesCompacted === "function") {
+        deletedCount = await store.markMessagesCompacted(extractedMessageIds);
+      } else {
+        deletedCount = await store.deleteMessagesByIds(extractedMessageIds);
+      }
+
       totalDeleted += deletedCount;
       conversationsProcessed++;
 
@@ -149,19 +224,44 @@ export async function runFactCompaction(
 
 export function cleanJsonText(rawText: string): string {
   let cleaned = rawText.trim();
-  if (cleaned.startsWith("```")) {
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch) {
+    cleaned = codeBlockMatch[1].trim();
+  } else if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  } else {
+    // If no code fence, attempt to extract outermost JSON structure (honoring whichever opens first)
+    const firstBracket = cleaned.indexOf("[");
+    const firstBrace = cleaned.indexOf("{");
+    if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
+      const arrayMatch = cleaned.match(/(\[[\s\S]*\])/);
+      if (arrayMatch) {
+        cleaned = arrayMatch[1].trim();
+      }
+    } else if (firstBrace !== -1) {
+      const objectMatch = cleaned.match(/(\{[\s\S]*\})/);
+      if (objectMatch) {
+        cleaned = objectMatch[1].trim();
+      }
+    }
   }
   return cleaned;
 }
 
-async function extractFacts(
+export async function extractFacts(
   messages: Array<{ id: string; role: string; content: string; created_at: string }>
 ): Promise<{
   success: boolean;
   facts: Array<{ content: string; importance: number; tags: string[] }>;
+  abortedDueToQuota?: boolean;
 }> {
   try {
+    const usageCheck = await checkAndIncrementUsage("llm");
+    if (!usageCheck.allowed) {
+      console.warn("[compaction] Fact extraction aborted: LLM usage limit reached.");
+      return { success: false, facts: [], abortedDueToQuota: true };
+    }
+
     const conversationText = messages
       .map((m) => `[${m.role}] ${m.content}`)
       .join("\n");
@@ -174,20 +274,21 @@ async function extractFacts(
     });
 
     const cleaned = cleanJsonText(result.text);
-    const parsed = JSON.parse(cleaned);
-    if (!Array.isArray(parsed)) {
-      return { success: true, facts: [] };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      console.error("[compaction] Fact extraction returned invalid JSON text:", cleaned);
+      return { success: false, facts: [] };
     }
 
-    const facts = parsed.filter(
-      (f: unknown): f is { content: string; importance: number; tags: string[] } =>
-        typeof f === "object" &&
-        f !== null &&
-        "content" in f &&
-        typeof (f as { content: unknown }).content === "string"
-    );
+    const parseResult = FactExtractionResponseSchema.safeParse(parsed);
+    if (!parseResult.success) {
+      console.error("[compaction] Fact extraction schema validation failed:", parseResult.error.format());
+      return { success: false, facts: [] };
+    }
 
-    return { success: true, facts };
+    return { success: true, facts: parseResult.data };
   } catch (err) {
     console.error("[compaction] Fact extraction failed:", err);
     return { success: false, facts: [] };

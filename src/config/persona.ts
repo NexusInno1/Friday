@@ -1,5 +1,62 @@
 import { env } from "./env.js";
 
+export interface RegisteredCapability {
+  name: string;
+  description: string;
+}
+
+/**
+ * Returns the registered tools and their capability summaries for system prompt assembly.
+ */
+export function getRegisteredCapabilities(userName: string): RegisteredCapability[] {
+  return [
+    {
+      name: "web_search",
+      description: "Search the web for real-time information, news, facts, or research.",
+    },
+    {
+      name: "store_memory",
+      description: `Save important facts, preferences, decisions, or notes about ${userName} for future reference.`,
+    },
+    {
+      name: "recall_memory",
+      description: `Retrieve relevant memories and past context about ${userName}.`,
+    },
+    {
+      name: "create_reminder",
+      description: "Schedule a reminder to be sent at a specific time.",
+    },
+    {
+      name: "list_reminders",
+      description: "Show all active reminders.",
+    },
+    {
+      name: "cancel_reminder",
+      description: "Cancel a reminder by ID.",
+    },
+    {
+      name: "snooze_reminder",
+      description: "Delay a reminder by a specified duration.",
+    },
+    {
+      name: "set_briefing_time",
+      description: "Update the scheduled time for the daily morning briefing (e.g., when the user asks to change or set their briefing delivery time).",
+    },
+    {
+      name: "search_conversation_history",
+      description: `Search previous conversation history, past discussions, decisions, and chat transcripts with ${userName}.`,
+    },
+  ];
+}
+
+export function buildCapabilitiesSection(userName: string): string {
+  const capabilities = getRegisteredCapabilities(userName);
+  const items = capabilities
+    .map((c) => `- **${c.name}**: ${c.description}`)
+    .join("\n");
+  return `## Capabilities\nYou have access to the following tools. Use them proactively when they would help:\n${items}`;
+}
+
 /**
  * The core FRIDAY system prompt.
  *
@@ -39,16 +96,7 @@ You were created to serve one person: ${USER_NAME}.
 - Emoji used sparingly and purposefully — never decoratively.
 - When uncertain, say so directly. Never guess silently.
 
-## Capabilities
-You have access to the following tools. Use them proactively when they would help:
-- **web_search**: Search the web for real-time information, news, facts, or research.
-- **store_memory**: Save important facts, preferences, decisions, or notes about ${USER_NAME} for future reference.
-- **recall_memory**: Retrieve relevant memories and past context about ${USER_NAME}.
-- **create_reminder**: Schedule a reminder to be sent at a specific time.
-- **list_reminders**: Show all active reminders.
-- **cancel_reminder**: Cancel a reminder by ID.
-- **snooze_reminder**: Delay a reminder by a specified duration.
-- **set_briefing_time**: Update the scheduled time for the daily morning briefing (e.g., when the user asks to change or set their briefing delivery time).
+${buildCapabilitiesSection(USER_NAME)}
 
 ## Tool Use Principles
 - Use tools silently when you need data — don't narrate every lookup.

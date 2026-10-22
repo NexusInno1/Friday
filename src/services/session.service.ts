@@ -1,8 +1,9 @@
-import { generateText } from "ai";
+import { generateText, type LanguageModel } from "ai";
 import { getDataStore } from "../db/datastore-provider.js";
 import type { DataStore } from "../db/datastore.js";
 import { getModel } from "./model.service.js";
 import type { ConversationSession, HistorySearchResult } from "../db/schema.js";
+import { checkAndIncrementUsage } from "./cost-tracker.service.js";
 
 const TITLE_PROMPT = `You are a concise conversation titler. Given the first few messages of a dialogue between a user and their AI assistant, produce a brief 3 to 5 word topic title.
 Rules:
@@ -16,11 +17,25 @@ Rules:
  */
 export async function maybeAutoTitleSession(
   conversationId: string,
-  store: DataStore = getDataStore()
+  store: DataStore = getDataStore(),
+  model?: LanguageModel
 ): Promise<string | null> {
   try {
+    if (typeof store.getSession === "function") {
+      const session = await store.getSession(conversationId);
+      if (session?.title && session.title.trim().length > 0) {
+        return session.title;
+      }
+    }
+
     const messages = await store.getSessionMessages(conversationId, 6);
     if (messages.length < 2) {
+      return null;
+    }
+
+    const usageCheck = await checkAndIncrementUsage("llm");
+    if (!usageCheck.allowed) {
+      console.warn(`[session.service] Auto-titling skipped for ${conversationId}: LLM usage cap reached.`);
       return null;
     }
 
@@ -29,7 +44,7 @@ export async function maybeAutoTitleSession(
       .join("\n");
 
     const result = await generateText({
-      model: getModel(),
+      model: model ?? getModel(),
       system: TITLE_PROMPT,
       prompt: `Dialogue:\n${transcript}\n\nTitle:`,
       maxTokens: 20,

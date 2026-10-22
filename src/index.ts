@@ -95,9 +95,23 @@ async function main() {
   } else {
     console.log("⚡ Starting FRIDAY in Long Polling mode (dev / standalone)...");
     try {
-      await bot.api.deleteWebhook({ drop_pending_updates: false });
+      const webhookInfo = await bot.api.getWebhookInfo();
+      if (webhookInfo.url) {
+        if (process.env.FORCE_DELETE_WEBHOOK === "true") {
+          console.warn(
+            `⚠️ FORCE_DELETE_WEBHOOK=true: Removing active webhook (${webhookInfo.url}) to enable local polling.`
+          );
+          await bot.api.deleteWebhook({ drop_pending_updates: false });
+        } else {
+          console.warn(
+            `⚠️ Active webhook detected at "${webhookInfo.url}". ` +
+              `Refusing to delete webhook during dev polling to protect production deployment. ` +
+              `Set FORCE_DELETE_WEBHOOK=true if you intentionally want to delete the production webhook.`
+          );
+        }
+      }
     } catch (err) {
-      console.warn("⚠️ Could not clear existing webhook before polling:", err);
+      console.warn("⚠️ Could not check/clear existing webhook before polling:", err);
     }
     await bot.start({
       allowed_updates: ["message", "callback_query"],

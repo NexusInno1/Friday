@@ -639,7 +639,7 @@ export class ProactiveScheduler {
     // 2. Daily fact compaction at 3 AM (ADR-0006)
     this.compactionCron = new Cron("0 3 * * *", { timezone }, () => {
       console.log("[scheduler] Starting daily fact compaction...");
-      void runFactCompaction(this.store).catch((err) =>
+      void runFactCompaction(this.store, undefined, { softDelete: true }).catch((err) =>
         console.error("[scheduler] Fact compaction failed:", err)
       );
     });

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { InMemoryDataStore } from "../db/in-memory-datastore.js";
-import { createTools } from "./registry.js";
+import { createTools, createSimplifiedTools } from "./registry.js";
 
 describe("Tool Registry - Scoping & Injection", () => {
   let store: InMemoryDataStore;
@@ -158,4 +158,45 @@ describe("Tool Registry - Scoping & Injection", () => {
     expect(emptyRes.found).toBe(false);
     expect(emptyRes.matches).toEqual([]);
   });
+
+  it("maintains 1:1 tool registry parity between createTools and createSimplifiedTools", () => {
+    const fullTools = createTools({ chatId: testChatId, userId: testUserId, store });
+    const simplifiedTools = createSimplifiedTools({ chatId: testChatId, userId: testUserId, store });
+
+    const fullKeys = Object.keys(fullTools).sort();
+    const simplifiedKeys = Object.keys(simplifiedTools).sort();
+
+    expect(simplifiedKeys).toEqual(fullKeys);
+    expect(simplifiedKeys).toEqual([
+      "cancel_reminder",
+      "create_reminder",
+      "list_reminders",
+      "recall_memory",
+      "search_conversation_history",
+      "set_briefing_time",
+      "snooze_reminder",
+      "store_memory",
+      "web_search",
+    ]);
+  });
+
+  it("scopes set_briefing_time in createSimplifiedTools to injected store and userId", async () => {
+    const tools = createSimplifiedTools({
+      chatId: testChatId,
+      userId: testUserId,
+      store,
+    });
+
+    const res = await tools.set_briefing_time.execute(
+      { time: "07:45" },
+      { toolCallId: "test_call_simplified_briefing", messages: [] }
+    );
+
+    expect(res.success).toBe(true);
+    expect(res.new_briefing_time).toBe("07:45");
+
+    const profile = await store.getUserProfile(testUserId);
+    expect(profile?.briefing_time).toBe("07:45");
+  });
 });
+

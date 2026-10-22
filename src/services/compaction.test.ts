@@ -1,9 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { cleanJsonText } from "./compaction.service.js";
+import {
+  cleanJsonText,
+  FactItemSchema,
+  FactExtractionResponseSchema,
+} from "./compaction.service.js";
 
 describe("cleanJsonText", () => {
   it("cleans markdown code block with json tag", () => {
     const raw = "```json\n[{\"content\": \"test\", \"importance\": 3, \"tags\": [\"work\"]}]\n```";
+    const cleaned = cleanJsonText(raw);
+    expect(cleaned).toBe("[{\"content\": \"test\", \"importance\": 3, \"tags\": [\"work\"]}]");
+    expect(JSON.parse(cleaned)).toEqual([
+      { content: "test", importance: 3, tags: ["work"] },
+    ]);
+  });
+
+  it("cleans markdown code block with preamble and postscript commentary", () => {
+    const raw = "Here are the extracted facts:\n```json\n[{\"content\": \"test\", \"importance\": 3, \"tags\": [\"work\"]}]\n```\nHope this helps!";
     const cleaned = cleanJsonText(raw);
     expect(cleaned).toBe("[{\"content\": \"test\", \"importance\": 3, \"tags\": [\"work\"]}]");
     expect(JSON.parse(cleaned)).toEqual([
@@ -33,6 +46,58 @@ describe("cleanJsonText", () => {
     const raw = "```json\n[]\n```";
     const cleaned = cleanJsonText(raw);
     expect(JSON.parse(cleaned)).toEqual([]);
+  });
+
+  it("extracts JSON array surrounded by conversational text without code blocks", () => {
+    const raw = "Certainly! Here are the extracted facts:\n[{\"content\": \"Likes green tea\", \"importance\": 3, \"tags\": [\"tea\"]}]\nLet me know if you need anything else.";
+    const cleaned = cleanJsonText(raw);
+    expect(JSON.parse(cleaned)).toEqual([
+      { content: "Likes green tea", importance: 3, tags: ["tea"] },
+    ]);
+  });
+
+  it("extracts JSON object surrounded by conversational text without code blocks", () => {
+    const raw = "Facts extracted:\n{\"facts\": [{\"content\": \"Works remotely\", \"importance\": 4, \"tags\": [\"work\"]}]}\nEnd of extraction.";
+    const cleaned = cleanJsonText(raw);
+    expect(JSON.parse(cleaned)).toEqual({
+      facts: [{ content: "Works remotely", importance: 4, tags: ["work"] }],
+    });
+  });
+});
+
+describe("FactItemSchema and FactExtractionResponseSchema", () => {
+  it("normalizes diverse LLM output variations (string numbers, aliases, comma tags)", () => {
+    const rawFacts = [
+      { content: "Prefers espresso", importance: "5", tags: ["coffee", "routine"] },
+      { fact: "Has a dog named Max", importance: 4.2, tags: "pets, animals" },
+      { statement: "Uses Neovim for editing", importance: null, tags: null },
+    ];
+
+    const parsed = FactExtractionResponseSchema.parse(rawFacts);
+    expect(parsed).toEqual([
+      { content: "Prefers espresso", importance: 5, tags: ["coffee", "routine"] },
+      { content: "Has a dog named Max", importance: 4, tags: ["pets", "animals"] },
+      { content: "Uses Neovim for editing", importance: 3, tags: [] },
+    ]);
+  });
+
+  it("parses wrapped { facts: [...] } object response", () => {
+    const wrapped = {
+      facts: [
+        { content: "Lives in Bengaluru", importance: 3, tags: ["location"] },
+      ],
+    };
+
+    const parsed = FactExtractionResponseSchema.parse(wrapped);
+    expect(parsed).toEqual([
+      { content: "Lives in Bengaluru", importance: 3, tags: ["location"] },
+    ]);
+  });
+
+  it("rejects items without any content, fact, or statement", () => {
+    const invalid = [{ importance: 4, tags: ["work"] }];
+    const result = FactExtractionResponseSchema.safeParse(invalid);
+    expect(result.success).toBe(false);
   });
 });
 
@@ -276,5 +341,173 @@ describe("runFactCompaction safety & bounds", () => {
     // Run 4: Poison is quarantined and skipped
     const run4 = await runFactCompaction(store, mockExtractor);
     expect(run4.conversationsProcessed).toBe(0);
+  });
+
+  it("aborts deletion when 0 facts are extracted from existing old messages", async () => {
+    const { InMemoryDataStore } = await import("../db/in-memory-datastore.js");
+    const { runFactCompaction } = await import("./compaction.service.js");
+    const store = new InMemoryDataStore();
+    const convId = "conv-empty-facts";
+    const baseTime = Date.now() - 35 * 24 * 60 * 60 * 1000;
+
+    for (let i = 0; i < 5; i++) {
+      const id = `msg-empty-${i}`;
+      store.messages.set(id, {
+        id,
+        conversation_id: convId,
+        role: "user",
+        content: `Message ${i}`,
+        tool_name: null,
+        tool_call_id: null,
+        tokens_used: null,
+        created_at: new Date(baseTime + i * 1000).toISOString(),
+      });
+    }
+
+    // Extractor reports success: true, but facts: []
+    const emptyFactsExtractor = async () => ({
+      success: true,
+      facts: [],
+    });
+
+    const result = await runFactCompaction(store, emptyFactsExtractor);
+    expect(result.factsExtracted).toBe(0);
+    expect(result.messagesDeleted).toBe(0);
+    // Messages must NOT have been deleted
+    expect(store.messages.size).toBe(5);
+  });
+
+  it("supports non-destructive soft-delete with options: { softDelete: true }", async () => {
+    const { InMemoryDataStore } = await import("../db/in-memory-datastore.js");
+    const { runFactCompaction } = await import("./compaction.service.js");
+    const store = new InMemoryDataStore();
+    const convId = "conv-soft-delete";
+    const baseTime = Date.now() - 35 * 24 * 60 * 60 * 1000;
+
+    for (let i = 0; i < 4; i++) {
+      const id = `msg-soft-${i}`;
+      store.messages.set(id, {
+        id,
+        conversation_id: convId,
+        role: "user",
+        content: `Soft delete message ${i}`,
+        tool_name: null,
+        tool_call_id: null,
+        tokens_used: null,
+        created_at: new Date(baseTime + i * 1000).toISOString(),
+      });
+    }
+
+    const mockExtractor = async () => ({
+      success: true,
+      facts: [{ content: "Extracted fact from soft delete test", importance: 4, tags: ["test"] }],
+    });
+
+    const result = await runFactCompaction(store, mockExtractor, { softDelete: true });
+    expect(result.factsExtracted).toBe(1);
+    expect(result.messagesDeleted).toBe(4);
+    // All 4 messages still exist in datastore!
+    expect(store.messages.size).toBe(4);
+
+    // Each message has compacted_at set
+    for (let i = 0; i < 4; i++) {
+      const msg = store.messages.get(`msg-soft-${i}`);
+      expect(msg?.compacted_at).toBeDefined();
+    }
+
+    // Future getOldMessages call excludes compacted messages
+    const cutoffDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const oldConvs = await store.getOldMessages(cutoffDate);
+    expect(oldConvs.length).toBe(0);
+
+    // getContextMessages excludes compacted messages
+    const activeMsgs = await store.getContextMessages(convId);
+    expect(activeMsgs.length).toBe(0);
+  });
+
+  it("aborts compaction run early and does NOT quarantine conversation on abortedDueToQuota", async () => {
+    const { InMemoryDataStore } = await import("../db/in-memory-datastore.js");
+    const { runFactCompaction, resetCompactionQuarantine } = await import("./compaction.service.js");
+    resetCompactionQuarantine();
+
+    const store = new InMemoryDataStore();
+    const convId = "conv-quota";
+    const baseTime = Date.now() - 35 * 24 * 60 * 60 * 1000;
+
+    for (let i = 0; i < 3; i++) {
+      const id = `msg-quota-${i}`;
+      store.messages.set(id, {
+        id,
+        conversation_id: convId,
+        role: "user",
+        content: `Quota msg ${i}`,
+        tool_name: null,
+        tool_call_id: null,
+        tokens_used: null,
+        created_at: new Date(baseTime + i * 1000).toISOString(),
+      });
+    }
+
+    const quotaExtractor = async () => ({
+      success: false,
+      facts: [],
+      abortedDueToQuota: true,
+    });
+
+    // Run 1: Should abort early without deleting
+    const res1 = await runFactCompaction(store, quotaExtractor);
+    expect(res1.conversationsProcessed).toBe(0);
+    expect(res1.messagesDeleted).toBe(0);
+    expect(store.messages.size).toBe(3);
+
+    // If quota frees up on run 2, it should succeed immediately (not quarantined!)
+    const normalExtractor = async () => ({
+      success: true,
+      facts: [{ content: "Success after quota reset", importance: 3, tags: [] }],
+    });
+
+    const res2 = await runFactCompaction(store, normalExtractor);
+    expect(res2.conversationsProcessed).toBe(1);
+    expect(res2.messagesDeleted).toBe(3);
+    expect(store.messages.size).toBe(0);
+  });
+
+  it("marks messages compacted in soft-delete mode even when 0 facts are extracted without deleting rows", async () => {
+    const { InMemoryDataStore } = await import("../db/in-memory-datastore.js");
+    const { runFactCompaction } = await import("./compaction.service.js");
+
+    const store = new InMemoryDataStore();
+    const convId = "conv-soft-zero-facts";
+    const baseTime = Date.now() - 35 * 24 * 60 * 60 * 1000;
+
+    for (let i = 0; i < 3; i++) {
+      const id = `msg-zero-${i}`;
+      store.messages.set(id, {
+        id,
+        conversation_id: convId,
+        role: "user",
+        content: `Small talk message ${i}`,
+        tool_name: null,
+        tool_call_id: null,
+        tokens_used: null,
+        created_at: new Date(baseTime + i * 1000).toISOString(),
+      });
+    }
+
+    const emptyFactsExtractor = async () => ({
+      success: true,
+      facts: [],
+    });
+
+    const res = await runFactCompaction(store, emptyFactsExtractor, { softDelete: true });
+    expect(res.conversationsProcessed).toBe(1);
+    expect(res.factsExtracted).toBe(0);
+    expect(res.messagesDeleted).toBe(3); // 3 messages marked compacted
+    expect(store.messages.size).toBe(3); // Rows NOT deleted from datastore
+
+    // Verify each message has compacted_at set
+    for (let i = 0; i < 3; i++) {
+      expect(store.messages.get(`msg-zero-${i}`)?.compacted_at).toBeDefined();
+    }
   });
 });

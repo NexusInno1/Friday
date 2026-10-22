@@ -32,6 +32,11 @@ export async function checkMemoryContradiction(
   }
 
   try {
+    const usageCheck = await checkAndIncrementUsage("llm");
+    if (!usageCheck.allowed) {
+      return false;
+    }
+
     const activeModel = model ?? getModel();
     const prompt = `Determine if the NEW statement contradicts, invalidates, or replaces the EXISTING statement.
 Existing: "${existingFact}"
@@ -64,30 +69,50 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     return new Array(768).fill(0.01);
   }
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:embedContent?key=${GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: `models/${activeModel}`,
-        content: { parts: [{ text }] },
-        outputDimensionality: 768,
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    const errorDetails = await response.text().catch(() => "");
-    throw new Error(
-      `Embedding API error (${response.status} ${response.statusText}): ${errorDetails}`
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:embedContent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": GEMINI_API_KEY,
+        },
+        body: JSON.stringify({
+          model: `models/${activeModel}`,
+          content: { parts: [{ text }] },
+          outputDimensionality: 768,
+        }),
+      }
     );
-  }
 
-  const data = (await response.json()) as {
-    embedding: { values: number[] };
-  };
-  return data.embedding.values;
+    if (!response.ok) {
+      const errorDetails = await response.text().catch(() => "");
+      const safeDetails = GEMINI_API_KEY ? errorDetails.replaceAll(GEMINI_API_KEY, "[REDACTED]") : errorDetails;
+      throw new Error(
+        `Embedding API error (${response.status} ${response.statusText}): ${safeDetails}`
+      );
+    }
+
+    const data = (await response.json()) as {
+      embedding: { values: number[] };
+    };
+    return data.embedding.values;
+  } catch (err) {
+    if (GEMINI_API_KEY) {
+      if (err instanceof Error) {
+        if (err.message.includes(GEMINI_API_KEY)) {
+          err.message = err.message.replaceAll(GEMINI_API_KEY, "[REDACTED]");
+        }
+        if (err.stack && err.stack.includes(GEMINI_API_KEY)) {
+          err.stack = err.stack.replaceAll(GEMINI_API_KEY, "[REDACTED]");
+        }
+      } else if (typeof err === "string" && err.includes(GEMINI_API_KEY)) {
+        throw new Error(err.replaceAll(GEMINI_API_KEY, "[REDACTED]"));
+      }
+    }
+    throw err;
+  }
 }
 
 // ─── Memory Actions ──────────────────────────────────────────────────────────

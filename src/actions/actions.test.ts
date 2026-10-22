@@ -7,12 +7,15 @@ import {
   cancelReminderAction,
   updateBriefingTimeAction,
   checkMemoryContradiction,
+  generateEmbedding,
   EMBEDDING_MODEL,
   webSearchAction,
   rememberAction,
   recallMemoriesAction,
 } from "./actions.js";
 import { setAlertDispatcher, resetAlertRateLimits } from "../services/alert.service.js";
+import { resetDailyUsage } from "../services/cost-tracker.service.js";
+import { env, setEnv } from "../config/env.js";
 import type { LanguageModelV1 } from "@ai-sdk/provider";
 
 describe("Core Actions", () => {
@@ -315,4 +318,227 @@ describe("Core Actions", () => {
       }
     });
   });
+
+  describe("checkMemoryContradiction", () => {
+    it("returns true on exact string match without calling model", async () => {
+      const isMatch = await checkMemoryContradiction("User lives in Tokyo", "User lives in Tokyo");
+      expect(isMatch).toBe(true);
+    });
+
+    it("evaluates model response and returns true when contradiction indicated", async () => {
+      const mockModel: LanguageModelV1 = {
+        specificationVersion: "v1",
+        modelId: "mock-model",
+        provider: "mock",
+        defaultObjectGenerationMode: "json",
+        async doGenerate() {
+          return {
+            text: "CONTRADICT - the user moved from Tokyo to Kyoto",
+            finishReason: "stop",
+            usage: { promptTokens: 10, completionTokens: 5 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        },
+        async doStream() { throw new Error("Not implemented"); },
+      };
+
+      const result = await checkMemoryContradiction(
+        "User lives in Tokyo",
+        "User moved to Kyoto",
+        mockModel as any
+      );
+      expect(result).toBe(true);
+    });
+
+    it("evaluates model response and returns false when not a contradiction", async () => {
+      const mockModel: LanguageModelV1 = {
+        specificationVersion: "v1",
+        modelId: "mock-model",
+        provider: "mock",
+        defaultObjectGenerationMode: "json",
+        async doGenerate() {
+          return {
+            text: "NO - the user likes both coffee and tea",
+            finishReason: "stop",
+            usage: { promptTokens: 10, completionTokens: 5 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        },
+        async doStream() { throw new Error("Not implemented"); },
+      };
+
+      const result = await checkMemoryContradiction(
+        "User drinks coffee",
+        "User drinks tea",
+        mockModel as any
+      );
+      expect(result).toBe(false);
+    });
+
+    it("safely skips contradiction check and returns false when LLM spending cap is reached", async () => {
+      resetDailyUsage();
+      const originalEnv = env();
+      setEnv({
+        ...originalEnv,
+        DAILY_LLM_CALL_CAP: 0, // Zero cap to force immediate quota limit
+      });
+
+      let modelCalled = false;
+      const mockModel: LanguageModelV1 = {
+        specificationVersion: "v1",
+        modelId: "mock-model",
+        provider: "mock",
+        defaultObjectGenerationMode: "json",
+        async doGenerate() {
+          modelCalled = true;
+          return {
+            text: "YES",
+            finishReason: "stop",
+            usage: { promptTokens: 10, completionTokens: 2 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        },
+        async doStream() { throw new Error("Not implemented"); },
+      };
+
+      try {
+        const result = await checkMemoryContradiction(
+          "User works at Google",
+          "User works at OpenAI",
+          mockModel as any
+        );
+        expect(result).toBe(false);
+        expect(modelCalled).toBe(false);
+      } finally {
+        setEnv(originalEnv);
+        resetDailyUsage();
+      }
+    });
+  });
+
+  describe("generateEmbedding Header & API Key Security", () => {
+    it("transmits GEMINI_API_KEY via x-goog-api-key header and never in URL query parameter", async () => {
+      const originalFetch = globalThis.fetch;
+      const secretKey = "test-secret-gemini-key-12345";
+      const originalEnv = env();
+      setEnv({
+        ...originalEnv,
+        GEMINI_API_KEY: secretKey,
+      });
+
+      let capturedUrl = "";
+      let capturedHeaders: Record<string, string> = {};
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        capturedUrl = url;
+        capturedHeaders = init?.headers ?? {};
+        return {
+          ok: true,
+          json: async () => ({
+            embedding: { values: [0.1, 0.2, 0.3] },
+          }),
+        };
+      });
+
+      try {
+        const embedding = await generateEmbedding("Test text for embedding");
+        expect(embedding).toEqual([0.1, 0.2, 0.3]);
+        expect(capturedUrl).not.toContain("?key=");
+        expect(capturedUrl).not.toContain(secretKey);
+        expect(capturedHeaders["x-goog-api-key"]).toBe(secretKey);
+      } finally {
+        globalThis.fetch = originalFetch;
+        setEnv(originalEnv);
+      }
+    });
+
+    it("redacts GEMINI_API_KEY in error details if API returns error body containing the key", async () => {
+      const originalFetch = globalThis.fetch;
+      const secretKey = "test-secret-gemini-key-99999";
+      const originalEnv = env();
+      setEnv({
+        ...originalEnv,
+        GEMINI_API_KEY: secretKey,
+      });
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        text: async () => `Invalid request for api_key=${secretKey} on resource`,
+      });
+
+      try {
+        await expect(generateEmbedding("Sample text")).rejects.toThrowError(
+          expect.not.stringContaining(secretKey)
+        );
+        try {
+          await generateEmbedding("Sample text");
+        } catch (err) {
+          expect((err as Error).message).toContain("[REDACTED]");
+          expect((err as Error).message).not.toContain(secretKey);
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+        setEnv(originalEnv);
+      }
+    });
+
+    it("redacts GEMINI_API_KEY from network error messages if thrown", async () => {
+      const originalFetch = globalThis.fetch;
+      const secretKey = "test-secret-gemini-key-88888";
+      const originalEnv = env();
+      setEnv({
+        ...originalEnv,
+        GEMINI_API_KEY: secretKey,
+      });
+
+      globalThis.fetch = vi.fn().mockRejectedValue(
+        new Error(`Connection reset while transmitting credentials ${secretKey}`)
+      );
+
+      try {
+        await expect(generateEmbedding("Sample text")).rejects.toThrowError(
+          expect.not.stringContaining(secretKey)
+        );
+        try {
+          await generateEmbedding("Sample text");
+        } catch (err) {
+          expect((err as Error).message).toContain("[REDACTED]");
+          expect((err as Error).message).not.toContain(secretKey);
+          if ((err as Error).stack) {
+            expect((err as Error).stack).not.toContain(secretKey);
+          }
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+        setEnv(originalEnv);
+      }
+    });
+
+    it("redacts GEMINI_API_KEY from non-Error string throws", async () => {
+      const originalFetch = globalThis.fetch;
+      const secretKey = "test-secret-gemini-key-string-99999";
+      const originalEnv = env();
+      setEnv({
+        ...originalEnv,
+        GEMINI_API_KEY: secretKey,
+      });
+
+      globalThis.fetch = vi.fn().mockRejectedValue(`Raw network string failure with ${secretKey}`);
+
+      try {
+        await expect(generateEmbedding("Sample text")).rejects.toThrowError("[REDACTED]");
+        try {
+          await generateEmbedding("Sample text");
+        } catch (err) {
+          expect((err as Error).message).not.toContain(secretKey);
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+        setEnv(originalEnv);
+      }
+    });
+  });
 });
+

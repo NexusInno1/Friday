@@ -71,6 +71,15 @@ export class InMemoryDataStore implements DataStore {
 
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
+
+    // Atomically deactivate older active sessions for this chat
+    for (const conv of this.conversations.values()) {
+      if (conv.telegram_chat_id === chatId && conv.is_active) {
+        conv.is_active = false;
+        conv.updated_at = now;
+      }
+    }
+
     const newConv: Conversation = {
       id,
       telegram_chat_id: chatId,
@@ -124,6 +133,7 @@ export class InMemoryDataStore implements DataStore {
 
     const relevant = Array.from(this.messages.values())
       .filter((m) => {
+        if (m.compacted_at) return false;
         if (m.conversation_id !== conversationId) return false;
         if (clearedTime > 0 && new Date(m.created_at).getTime() <= clearedTime) return false;
         return true;
@@ -152,6 +162,7 @@ export class InMemoryDataStore implements DataStore {
         const priorMessages = Array.from(this.messages.values())
           .filter(
             (m) =>
+              !m.compacted_at &&
               m.conversation_id === priorConvId &&
               new Date(m.created_at).getTime() > clearedTime
           )
@@ -243,6 +254,29 @@ export class InMemoryDataStore implements DataStore {
       messageCount,
       createdAt: latest.created_at,
       updatedAt: latest.updated_at,
+    };
+  }
+
+  async getSession(conversationId: string): Promise<ConversationSession | null> {
+    const conv = this.conversations.get(conversationId);
+    if (!conv) return null;
+
+    let messageCount = 0;
+    for (const msg of this.messages.values()) {
+      if (msg.conversation_id === conv.id) {
+        messageCount++;
+      }
+    }
+
+    return {
+      id: conv.id,
+      telegramChatId: conv.telegram_chat_id,
+      title: conv.title ?? null,
+      summary: conv.summary ?? null,
+      isActive: conv.is_active,
+      messageCount,
+      createdAt: conv.created_at,
+      updatedAt: conv.updated_at,
     };
   }
 
@@ -391,7 +425,7 @@ export class InMemoryDataStore implements DataStore {
     const seen = new Set<string>();
     const result: Array<{ conversation_id: string }> = [];
     for (const msg of this.messages.values()) {
-      if (new Date(msg.created_at).getTime() < cutoffTime) {
+      if (!msg.compacted_at && new Date(msg.created_at).getTime() < cutoffTime) {
         if (!seen.has(msg.conversation_id)) {
           seen.add(msg.conversation_id);
           result.push({ conversation_id: msg.conversation_id });
@@ -411,6 +445,7 @@ export class InMemoryDataStore implements DataStore {
     return Array.from(this.messages.values())
       .filter(
         (m) =>
+          !m.compacted_at &&
           m.conversation_id === conversationId &&
           new Date(m.created_at).getTime() < cutoffTime
       )
@@ -441,6 +476,19 @@ export class InMemoryDataStore implements DataStore {
     let count = 0;
     for (const id of messageIds) {
       if (this.messages.delete(id)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  async markMessagesCompacted(messageIds: string[]): Promise<number> {
+    const now = new Date().toISOString();
+    let count = 0;
+    for (const id of messageIds) {
+      const msg = this.messages.get(id);
+      if (msg) {
+        msg.compacted_at = now;
         count++;
       }
     }

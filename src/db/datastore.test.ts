@@ -352,5 +352,79 @@ describe("InMemoryDataStore", () => {
       const sessions = await store.listSessions(chatId);
       expect(sessions.length).toBe(0);
     });
+
+    it("prevents session proliferation by atomically deactivating older active sessions", async () => {
+      const chatId = 2002;
+      // Conv 1
+      const conv1 = await store.getOrCreateConversation(chatId);
+      const active1 = await store.getActiveSession(chatId);
+      expect(active1?.id).toBe(conv1);
+      expect(active1?.isActive).toBe(true);
+
+      // Force conv1 to be older than 24h to trigger new conversation creation
+      const oldTime = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+      const rawConv1 = store.conversations.get(conv1)!;
+      rawConv1.created_at = oldTime;
+      rawConv1.updated_at = oldTime;
+
+      // Conv 2 is created
+      const conv2 = await store.getOrCreateConversation(chatId);
+      expect(conv2).not.toBe(conv1);
+
+      // Verify Conv 1 was deactivated
+      expect(rawConv1.is_active).toBe(false);
+
+      // Verify only Conv 2 is active
+      const activeSessions = Array.from(store.conversations.values()).filter(
+        (c) => c.telegram_chat_id === chatId && c.is_active
+      );
+      expect(activeSessions.length).toBe(1);
+      expect(activeSessions[0].id).toBe(conv2);
+    });
+
+    it("filters out compacted messages from getContextMessages while keeping them searchable in history", async () => {
+      const chatId = 3003;
+      const convId = await store.getOrCreateConversation(chatId);
+
+      await store.saveMessage(convId, "user", "Message 1 - durable instruction");
+      await store.saveMessage(convId, "assistant", "Message 2 - ack");
+      await store.saveMessage(convId, "user", "Message 3 - recent query");
+
+      const msgs = Array.from(store.messages.values()).filter((m) => m.conversation_id === convId);
+      expect(msgs.length).toBe(3);
+
+      // Mark first two messages as compacted
+      const compactedIds = [msgs[0].id, msgs[1].id];
+      const count = await store.markMessagesCompacted(compactedIds);
+      expect(count).toBe(2);
+
+      // getContextMessages should now only return Message 3
+      const contextMsgs = await store.getContextMessages(convId);
+      expect(contextMsgs.length).toBe(1);
+      expect(contextMsgs[0].content).toBe("Message 3 - recent query");
+
+      // But searchMessageHistory should still find Message 1
+      const searchResults = await store.searchMessageHistory(chatId, "durable");
+      expect(searchResults.length).toBe(1);
+      expect(searchResults[0].content).toContain("durable instruction");
+    });
+
+    it("retrieves a session by conversation ID with getSession", async () => {
+      const chatId = 4004;
+      const convId = await store.getOrCreateConversation(chatId);
+      await store.saveMessage(convId, "user", "Session test msg");
+      await store.updateSessionTitle(convId, "Custom Topic");
+
+      const session = await store.getSession(convId);
+      expect(session).not.toBeNull();
+      expect(session?.id).toBe(convId);
+      expect(session?.telegramChatId).toBe(chatId);
+      expect(session?.title).toBe("Custom Topic");
+      expect(session?.messageCount).toBe(1);
+
+      const nonExistent = await store.getSession("non-existent-id");
+      expect(nonExistent).toBeNull();
+    });
   });
 });
+
