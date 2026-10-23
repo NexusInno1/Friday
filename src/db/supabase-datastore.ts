@@ -39,7 +39,7 @@ export class SupabaseDataStore implements DataStore {
 
     if (existing) return existing.id;
 
-    // Atomically deactivate older active sessions for this chat
+    // Archive any stale active conversations for this chat to maintain single-active invariant
     const { error: deactivateError } = await this.db
       .from("conversations")
       .update({ is_active: false })
@@ -60,22 +60,24 @@ export class SupabaseDataStore implements DataStore {
       .single();
 
     if (error || !data) {
-      // If unique constraint was hit due to concurrent insertion, re-fetch the active conversation
-      const { data: retryExisting } = await this.db
+      // Concurrency recovery: If unique constraint was hit due to concurrent insertion
+      // (violating oneactiveconv / one_active_conv), fetch and return the active conversation
+      const { data: retryActive } = await this.db
         .from("conversations")
         .select("id")
         .eq("telegram_chat_id", chatId)
         .eq("is_active", true)
-        .order("created_at", { ascending: false })
+        .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (retryExisting) {
-        return retryExisting.id;
+      if (retryActive) {
+        return retryActive.id;
       }
 
       throw new Error(`Failed to create conversation: ${error?.message ?? "unknown error"}`);
     }
+
     return data.id;
   }
 

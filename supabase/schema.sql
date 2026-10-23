@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS conversations (
 
 CREATE INDEX IF NOT EXISTS idx_conversations_chat_id ON conversations(telegram_chat_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_active_lookup ON conversations(telegram_chat_id, is_active, updated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS oneactiveconv ON conversations(telegram_chat_id) WHERE is_active = true;
 
 CREATE TABLE IF NOT EXISTS messages (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

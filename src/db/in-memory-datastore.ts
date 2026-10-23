@@ -69,6 +69,13 @@ export class InMemoryDataStore implements DataStore {
       return latestActiveConv.id;
     }
 
+    // Archive any previous active conversations for this chat to maintain single-active invariant
+    for (const conv of this.conversations.values()) {
+      if (conv.telegram_chat_id === chatId && conv.is_active !== false) {
+        conv.is_active = false;
+      }
+    }
+
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
