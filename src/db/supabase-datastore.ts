@@ -39,6 +39,17 @@ export class SupabaseDataStore implements DataStore {
 
     if (existing) return existing.id;
 
+    // Archive any stale active conversations for this chat to maintain single-active invariant
+    const { error: deactivateError } = await this.db
+      .from("conversations")
+      .update({ is_active: false })
+      .eq("telegram_chat_id", chatId)
+      .eq("is_active", true);
+
+    if (deactivateError) {
+      console.warn("[supabase-store] Error deactivating stale conversation:", deactivateError.message);
+    }
+
     const { data, error } = await this.db
       .from("conversations")
       .insert({
@@ -48,9 +59,35 @@ export class SupabaseDataStore implements DataStore {
       .select("id")
       .single();
 
-    if (error || !data) {
-      throw new Error(`Failed to create conversation: ${error?.message ?? "unknown error"}`);
+    if (error) {
+      // Concurrency recovery: If another request just created or activated a conversation
+      // (violating the unique constraint oneactiveconv), fetch and return the active one.
+      if (
+        error.code === "23505" ||
+        error.message?.includes("oneactiveconv") ||
+        error.message?.includes("duplicate key")
+      ) {
+        const { data: currentActive } = await this.db
+          .from("conversations")
+          .select("id")
+          .eq("telegram_chat_id", chatId)
+          .eq("is_active", true)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (currentActive) {
+          return currentActive.id;
+        }
+      }
+
+      throw new Error(`Failed to create conversation: ${error.message}`);
     }
+
+    if (!data) {
+      throw new Error("Failed to create conversation: unknown error");
+    }
+
     return data.id;
   }
 

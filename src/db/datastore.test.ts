@@ -119,6 +119,8 @@ describe("InMemoryDataStore", () => {
     // Today's interaction (> 24h later) creates a new conversation
     const todayConvId = await store.getOrCreateConversation(456);
     expect(todayConvId).not.toBe(yesterdayConvId);
+    expect(store.conversations.get(yesterdayConvId)?.is_active).toBe(false);
+    expect(store.conversations.get(todayConvId)?.is_active).toBe(true);
 
     await store.saveMessage(todayConvId, "user", "What was the project name again?");
 
@@ -351,6 +353,26 @@ describe("InMemoryDataStore", () => {
 
       const sessions = await store.listSessions(chatId);
       expect(sessions.length).toBe(0);
+    });
+
+    it("maintains single active conversation invariant across multiple sessions", async () => {
+      const chatId = 555;
+      const conv1 = await store.getOrCreateConversation(chatId);
+      expect(store.conversations.get(conv1)?.is_active).toBe(true);
+
+      // Simulate 25 hours passing
+      const staleDate = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+      store.conversations.get(conv1)!.updated_at = staleDate;
+
+      // Creating conversation after 24h archives the stale one
+      const conv2 = await store.getOrCreateConversation(chatId);
+      expect(conv2).not.toBe(conv1);
+      expect(store.conversations.get(conv1)?.is_active).toBe(false);
+      expect(store.conversations.get(conv2)?.is_active).toBe(true);
+
+      const activeSessions = (await store.listSessions(chatId)).filter((s) => s.isActive);
+      expect(activeSessions.length).toBe(1);
+      expect(activeSessions[0].id).toBe(conv2);
     });
   });
 });
