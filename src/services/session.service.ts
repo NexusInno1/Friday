@@ -2,6 +2,7 @@ import { generateText } from "ai";
 import { getDataStore } from "../db/datastore-provider.js";
 import type { DataStore } from "../db/datastore.js";
 import { getModel } from "./model.service.js";
+import { checkAndIncrementUsage } from "./cost-tracker.service.js";
 import type { ConversationSession, HistorySearchResult } from "../db/schema.js";
 
 const TITLE_PROMPT = `You are a concise conversation titler. Given the first few messages of a dialogue between a user and their AI assistant, produce a brief 3 to 5 word topic title.
@@ -19,8 +20,24 @@ export async function maybeAutoTitleSession(
   store: DataStore = getDataStore()
 ): Promise<string | null> {
   try {
+    // 1. Guard against redundant titling if already titled
+    if (typeof store.getSession === "function") {
+      const session = await store.getSession(conversationId);
+      if (!session || (session.title && session.title.trim().length > 0)) {
+        return null;
+      }
+    }
+
+    // 2. Requires at least 2 messages to extract a meaningful title
     const messages = await store.getSessionMessages(conversationId, 6);
     if (messages.length < 2) {
+      return null;
+    }
+
+    // 3. Enforce daily LLM usage quota check
+    const quota = await checkAndIncrementUsage("llm");
+    if (!quota.allowed) {
+      console.warn(`[session.service] Auto-titling skipped for ${conversationId}: LLM quota exceeded`);
       return null;
     }
 
@@ -74,6 +91,13 @@ export async function archiveActiveSession(
   store: DataStore = getDataStore()
 ): Promise<void> {
   return store.archiveSession(chatId);
+}
+
+export async function getSession(
+  conversationId: string,
+  store: DataStore = getDataStore()
+): Promise<ConversationSession | null> {
+  return store.getSession(conversationId);
 }
 
 export async function deleteSession(

@@ -32,3 +32,6 @@ Thumbs.db
 
 # Temporary planning and agent scratch work
 .scratch/
+
+# Migration state
+.reembed-migration-state.json

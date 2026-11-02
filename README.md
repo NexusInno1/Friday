@@ -3,17 +3,17 @@
 [![CI](https://github.com/NexusInno1/Friday/actions/workflows/ci.yml/badge.svg)](https://github.com/NexusInno1/Friday/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-**FRIDAY** is an intelligent, personalized Telegram-based AI assistant inspired by Marvel's FRIDAY. Built with **TypeScript / Node.js**, powered by **Google Gemini 2.5 Flash** via the **Vercel AI SDK**, backed by **Supabase (pgvector)**, and equipped with **Tavily AI Web Search**, tiered multi-provider outage failover (**Groq** & **OpenAI**), and automated **minute-by-minute reminders & daily morning briefings**.
+**FRIDAY** is an intelligent, personalized Telegram-based AI assistant inspired by Marvel's FRIDAY. Built with **TypeScript / Node.js**, powered by **Google Gemini 3.5 Flash Lite** via the **Vercel AI SDK**, backed by **Supabase (pgvector)**, and equipped with **Tavily AI Web Search**, tiered multi-provider outage failover (**Groq** & **OpenAI**), and automated **minute-by-minute reminders & daily morning briefings**.
 
 ---
 
 ## ✨ Features
 
-- 🧠 **Long-Term Semantic Memory**: Stores facts, preferences, and project notes using **pgvector** embeddings (`text-embedding-004`) with cosine similarity recall.
-- 🔍 **Live Web Search & Research**: Real-time factual queries, news summaries, and URL extractions powered by **Tavily AI Search API**.
+- 🧠 **Long-Term Semantic Memory**: Stores facts, preferences, and project notes using **pgvector** embeddings (`gemini-embedding-2`, 768 dimensions) with cosine similarity recall.
+- 🔍 **Live Web Search & Research**: Real-time factual queries, multi-pillar news summaries, and URL extractions powered by **Tavily AI Search API** with daily volume tracking and quota protection (50 requests/day).
 - ⏰ **Smart Reminders & Scheduler**: Natural language reminder scheduling (`/remind`), minute-by-minute alert notifications, and interactive inline **Snooze / Cancel** buttons.
 - ☀️ **Proactive Daily Briefing**: Timezone-aware morning briefing sent straight to your Telegram at your configured time.
-- 🛡️ **Tiered Model Outage Failover**: Zero-downtime resilience cascading from Google Gemini 2.5 Flash ➔ Groq (`llama-3.3-70b-versatile`) ➔ OpenAI (`gpt-4o`).
+- 🛡️ **Tiered Model Outage Failover**: Zero-downtime resilience cascading from Google Gemini 3.5 Flash Lite ➔ Groq (`llama-3.3-70b-versatile`) ➔ OpenAI (`gpt-4o`).
 - 🔒 **Single-Owner Whitelist Security**: Strict Telegram User ID verification drops unauthorized messages silently.
 - ⚡ **Dual-Mode Startup**: Long Polling mode for zero-setup local dev; Webhook mode ready for cloud production.
 - 🐳 **Docker & 1-Click Railway Deployment**: Multi-stage `Dockerfile` and `docker-compose.yml` with HTTP health check probe ready for 24/7 hosting.
@@ -25,7 +25,7 @@
 - **Runtime**: Node.js 22+ (TypeScript ESM, strict mode)
 - **Telegram Framework**: [grammY](https://grammy.dev)
 - **AI Engine**: [Vercel AI SDK](https://sdk.vercel.ai) (`ai`, `@ai-sdk/google`, `@ai-sdk/openai`)
-- **Primary LLM**: Google Gemini 2.5 Flash (with Groq and OpenAI automated tiered fallbacks)
+- **Primary LLM**: Google Gemini 3.5 Flash Lite (`gemini-3.5-flash-lite`, with Groq and OpenAI automated tiered fallbacks)
 - **Vector Database**: [Supabase](https://supabase.com) (PostgreSQL + `pgvector` + HNSW indexing)
 - **Web Search**: [Tavily AI Search API](https://tavily.com)
 - **Scheduler**: [Croner](https://github.com/Hexagon/croner)
@@ -62,12 +62,13 @@ Fill in your credentials in `.env`:
 TELEGRAM_BOT_TOKEN="your-bot-token-from-botfather"
 TELEGRAM_ALLOWED_USER_ID="your-numeric-user-id"
 GEMINI_API_KEY="your-gemini-api-key"
-GEMINI_MODEL="gemini-3.6-flash"
+GEMINI_MODEL="gemini-3.5-flash-lite"
 TAVILY_API_KEY="your-tavily-api-key"
 SUPABASE_URL="https://your-project.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
 USER_TIMEZONE="Asia/Kolkata"
 USER_NAME="Boss"
+DAILY_TAVILY_CALL_CAP="50"
 ```
 
 ### 5. Run Locally

@@ -46,6 +46,7 @@ export interface DataStore {
   // ─── Sessions & History Search ─────────────────────────
   listSessions(chatId: number, limit?: number): Promise<ConversationSession[]>;
   getActiveSession(chatId: number): Promise<ConversationSession | null>;
+  getSession(conversationId: string): Promise<ConversationSession | null>;
   switchActiveSession(chatId: number, targetConversationId: string): Promise<ConversationSession>;
   updateSessionTitle(conversationId: string, title: string): Promise<void>;
   archiveSession(chatId: number): Promise<void>;
