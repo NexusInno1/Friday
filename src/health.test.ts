@@ -92,7 +92,8 @@ describe("Health Server Endpoints", () => {
     expect(status).toBe(503);
     expect(body.status).toBe("unhealthy");
     expect(body.database).toBe("disconnected");
-    expect(body.error).toContain("Connection pool timeout");
+    expect(body.error).toBe("Database check failed");
+    expect(body.error).not.toContain("Connection pool timeout");
   });
 
   it("GET / returns 200 with service description", async () => {

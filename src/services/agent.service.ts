@@ -24,6 +24,13 @@ const DEFAULT_MAX_STEPS = 10;
 
 export { getModel, resolveGeminiModel, getFallbackChain, isRetriableModelError, type FallbackModelDescriptor };
 
+/**
+ * Strips delimiter breakout tags from user-provided content before prompt interpolation.
+ */
+export function sanitizeUserContent(content: string): string {
+  return content.replace(/<\s*\/?\s*user_message(?:\s+[^>]*)?>/gi, "");
+}
+
 export interface AssistantEngineOptions {
   store?: DataStore;
   model?: LanguageModel;
@@ -125,7 +132,7 @@ export class AssistantEngine {
           role: m.role as "user" | "assistant",
           content:
             m.role === "user"
-              ? `<user_message>\n${m.content}\n</user_message>`
+              ? `<user_message>\n${sanitizeUserContent(m.content)}\n</user_message>`
               : m.content,
         }));
 
@@ -156,7 +163,7 @@ export class AssistantEngine {
           system: systemPrompt,
           messages: [
             ...messages,
-            { role: "user", content: `<user_message>\n${userMessage}\n</user_message>` },
+            { role: "user", content: `<user_message>\n${sanitizeUserContent(userMessage)}\n</user_message>` },
           ],
           tools: toolsToUse,
           maxSteps: this.maxSteps,

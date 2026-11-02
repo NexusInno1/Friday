@@ -489,7 +489,7 @@ export function createSimplifiedTools(context?: ToolContext) {
         time: z.string(),
       }),
       execute: async ({ time }) => {
-        const result = await updateBriefingTimeAction(time);
+        const result = await updateBriefingTimeAction(time, targetUserId, store);
         return { success: true, new_briefing_time: result.time };
       },
     }),

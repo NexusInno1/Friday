@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration: 006_enforce_single_active_conversation.sql
+-- Migration: 007_enforce_single_active_conversation.sql
 -- Enforces at most one active conversation per telegram_chat_id.
 -- Archives any duplicate active conversations preserving the latest updated one.
 -- ============================================================
