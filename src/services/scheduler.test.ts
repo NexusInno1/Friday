@@ -3,6 +3,7 @@ import { InMemoryDataStore } from "../db/in-memory-datastore.js";
 import {
   ProactiveScheduler,
   InMemoryDispatcher,
+  TelegramDispatcher,
   fetchBriefingSnapshot,
   BRIEFING_CATEGORIES,
   formatToIST,
@@ -677,5 +678,53 @@ describe("ProactiveScheduler", () => {
       }
     });
   });
-});
+  describe("TelegramDispatcher", () => {
+    it("chunks long messages and attaches buttons only to the last chunk", async () => {
+      const sentMessages: Array<{ chatId: number; text: string; options?: any }> = [];
+      const mockBot = {
+        api: {
+          sendMessage: vi.fn(async (chatId: number, text: string, options?: any) => {
+            sentMessages.push({ chatId, text, options });
+            return {};
+          }),
+        },
+      } as any;
 
+      const dispatcher = new TelegramDispatcher(mockBot);
+      const longText = "Paragraph 1: " + "a".repeat(3500) + "\n\nParagraph 2: " + "b".repeat(2500);
+
+      await dispatcher.sendMessage(12345, longText, {
+        buttons: [{ text: "Click Me", data: "action_1" }],
+      });
+
+      expect(sentMessages.length).toBeGreaterThan(1);
+      expect(sentMessages[0].options?.reply_markup).toBeUndefined();
+      const last = sentMessages[sentMessages.length - 1];
+      expect(last.options?.reply_markup).toBeDefined();
+    });
+
+    it("falls back to plain text if Markdown parsing fails", async () => {
+      const sentCalls: any[] = [];
+      let callCount = 0;
+      const mockBot = {
+        api: {
+          sendMessage: vi.fn(async (chatId: number, text: string, options?: any) => {
+            callCount++;
+            if (options?.parse_mode === "Markdown") {
+              throw new Error("Bad Request: can't parse entities");
+            }
+            sentCalls.push({ chatId, text, options });
+            return {};
+          }),
+        },
+      } as any;
+
+      const dispatcher = new TelegramDispatcher(mockBot);
+      await dispatcher.sendMessage(12345, "Unclosed *markdown text");
+
+      expect(callCount).toBe(2);
+      expect(sentCalls.length).toBe(1);
+      expect(sentCalls[0].options?.parse_mode).toBeUndefined();
+    });
+  });
+});

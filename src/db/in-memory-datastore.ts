@@ -227,6 +227,29 @@ export class InMemoryDataStore implements DataStore {
       .slice(0, limit);
   }
 
+  async getSession(conversationId: string): Promise<ConversationSession | null> {
+    const conv = this.conversations.get(conversationId);
+    if (!conv) return null;
+
+    let messageCount = 0;
+    for (const msg of this.messages.values()) {
+      if (msg.conversation_id === conv.id) {
+        messageCount++;
+      }
+    }
+
+    return {
+      id: conv.id,
+      telegramChatId: conv.telegram_chat_id,
+      title: conv.title ?? null,
+      summary: conv.summary ?? null,
+      isActive: conv.is_active !== false,
+      messageCount,
+      createdAt: conv.created_at,
+      updatedAt: conv.updated_at,
+    };
+  }
+
   async getActiveSession(chatId: number): Promise<ConversationSession | null> {
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     let latest: Conversation | null = null;

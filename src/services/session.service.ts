@@ -2,6 +2,7 @@ import { generateText, type LanguageModel } from "ai";
 import { getDataStore } from "../db/datastore-provider.js";
 import type { DataStore } from "../db/datastore.js";
 import { getModel } from "./model.service.js";
+import { checkAndIncrementUsage } from "./cost-tracker.service.js";
 import type { ConversationSession, HistorySearchResult } from "../db/schema.js";
 import { checkAndIncrementUsage } from "./cost-tracker.service.js";
 
@@ -89,6 +90,13 @@ export async function archiveActiveSession(
   store: DataStore = getDataStore()
 ): Promise<void> {
   return store.archiveSession(chatId);
+}
+
+export async function getSession(
+  conversationId: string,
+  store: DataStore = getDataStore()
+): Promise<ConversationSession | null> {
+  return store.getSession(conversationId);
 }
 
 export async function deleteSession(

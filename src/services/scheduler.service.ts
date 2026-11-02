@@ -4,6 +4,7 @@ import type { DataStore } from "../db/datastore.js";
 import { getDataStore } from "../db/datastore-provider.js";
 import { env } from "../config/env.js";
 import { parseTimeString, getEndOfDayISO, getTargetTimeISO } from "../utils/time.js";
+import { chunkMessage } from "../utils/chunk.js";
 import { runFactCompaction } from "./compaction.service.js";
 import {
   snoozeReminderAction,
@@ -45,16 +46,25 @@ export class TelegramDispatcher implements NotificationDispatcher {
       }
     }
 
-    try {
-      await this.bot.api.sendMessage(chatId, text, {
-        parse_mode: "Markdown",
-        reply_markup: replyMarkup,
-      });
-    } catch {
-      // Fallback without Markdown parsing if special characters fail
-      await this.bot.api.sendMessage(chatId, text, {
-        reply_markup: replyMarkup,
-      });
+    const chunks = chunkMessage(text, 4000);
+    const messageChunks = chunks.length > 0 ? chunks : [text];
+
+    for (let i = 0; i < messageChunks.length; i++) {
+      const chunk = messageChunks[i];
+      const isLastChunk = i === messageChunks.length - 1;
+      const currentMarkup = isLastChunk ? replyMarkup : undefined;
+
+      try {
+        await this.bot.api.sendMessage(chatId, chunk, {
+          parse_mode: "Markdown",
+          reply_markup: currentMarkup,
+        });
+      } catch {
+        // Fallback without Markdown parsing if special characters fail
+        await this.bot.api.sendMessage(chatId, chunk, {
+          reply_markup: currentMarkup,
+        });
+      }
     }
   }
 }

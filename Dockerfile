@@ -7,6 +7,7 @@ WORKDIR /app
 
 # Install all dependencies (including devDependencies for TypeScript compilation)
 COPY package*.json tsconfig*.json ./
+COPY scripts ./scripts
 RUN npm ci
 
 # Copy source code and compile production bundle
@@ -23,9 +24,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# Install production dependencies only and clear cache
+# Install production dependencies and run postinstall patches
 COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+COPY scripts ./scripts
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy compiled JavaScript output from builder stage
 COPY --from=builder /app/dist ./dist

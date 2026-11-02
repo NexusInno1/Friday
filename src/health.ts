@@ -60,8 +60,18 @@ export function startHealthServer(options?: { store?: DataStore; port?: number }
   const app = createHealthApp(options?.store);
   const port = options?.port ?? env().HEALTH_PORT;
 
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`🩺 Health check server listening on port ${port}`);
+  });
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `⚠️ Port ${port} is already in use by another application. Please configure HEALTH_PORT in .env (e.g., HEALTH_PORT=8081).`
+      );
+    } else {
+      console.error("Health server error:", err);
+    }
   });
 
   return app;
