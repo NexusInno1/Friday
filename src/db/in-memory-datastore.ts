@@ -287,29 +287,6 @@ export class InMemoryDataStore implements DataStore {
     };
   }
 
-  async getSession(conversationId: string): Promise<ConversationSession | null> {
-    const conv = this.conversations.get(conversationId);
-    if (!conv) return null;
-
-    let messageCount = 0;
-    for (const msg of this.messages.values()) {
-      if (msg.conversation_id === conv.id) {
-        messageCount++;
-      }
-    }
-
-    return {
-      id: conv.id,
-      telegramChatId: conv.telegram_chat_id,
-      title: conv.title ?? null,
-      summary: conv.summary ?? null,
-      isActive: conv.is_active,
-      messageCount,
-      createdAt: conv.created_at,
-      updatedAt: conv.updated_at,
-    };
-  }
-
   async switchActiveSession(
     chatId: number,
     targetConversationId: string

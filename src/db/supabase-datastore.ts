@@ -312,34 +312,6 @@ export class SupabaseDataStore implements DataStore {
     };
   }
 
-  async getSession(conversationId: string): Promise<ConversationSession | null> {
-    const { data, error } = await this.db
-      .from("conversations")
-      .select("id, telegram_chat_id, title, summary, is_active, created_at, updated_at")
-      .eq("id", conversationId)
-      .maybeSingle();
-
-    if (error || !data) {
-      return null;
-    }
-
-    const { count } = await this.db
-      .from("messages")
-      .select("id", { count: "exact", head: true })
-      .eq("conversation_id", data.id);
-
-    return {
-      id: data.id,
-      telegramChatId: data.telegram_chat_id,
-      title: data.title,
-      summary: data.summary,
-      isActive: data.is_active,
-      messageCount: count ?? 0,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-    };
-  }
-
   async switchActiveSession(
     chatId: number,
     targetConversationId: string
