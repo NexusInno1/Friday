@@ -1,4 +1,4 @@
-import { generateText } from "ai";
+import { generateText, type LanguageModel } from "ai";
 import { getDataStore } from "../db/datastore-provider.js";
 import type { DataStore } from "../db/datastore.js";
 import { getModel } from "./model.service.js";
@@ -17,14 +17,18 @@ Rules:
  */
 export async function maybeAutoTitleSession(
   conversationId: string,
-  store: DataStore = getDataStore()
+  store: DataStore = getDataStore(),
+  model?: LanguageModel
 ): Promise<string | null> {
   try {
-    // 1. Guard against redundant titling if already titled
+    // 1. Guard against redundant titling: return existing title if already titled
     if (typeof store.getSession === "function") {
       const session = await store.getSession(conversationId);
-      if (!session || (session.title && session.title.trim().length > 0)) {
+      if (!session) {
         return null;
+      }
+      if (session.title && session.title.trim().length > 0) {
+        return session.title;
       }
     }
 
@@ -35,9 +39,9 @@ export async function maybeAutoTitleSession(
     }
 
     // 3. Enforce daily LLM usage quota check
-    const quota = await checkAndIncrementUsage("llm");
-    if (!quota.allowed) {
-      console.warn(`[session.service] Auto-titling skipped for ${conversationId}: LLM quota exceeded`);
+    const usageCheck = await checkAndIncrementUsage("llm");
+    if (!usageCheck.allowed) {
+      console.warn(`[session.service] Auto-titling skipped for ${conversationId}: LLM usage cap reached.`);
       return null;
     }
 
@@ -46,7 +50,7 @@ export async function maybeAutoTitleSession(
       .join("\n");
 
     const result = await generateText({
-      model: getModel(),
+      model: model ?? getModel(),
       system: TITLE_PROMPT,
       prompt: `Dialogue:\n${transcript}\n\nTitle:`,
       maxTokens: 20,

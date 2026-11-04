@@ -24,14 +24,14 @@ describe("session.service maybeAutoTitleSession", () => {
     expect(result).toBeNull();
   });
 
-  it("skips titling if conversation already has a title", async () => {
+  it("returns existing title without calling LLM if conversation already has a title", async () => {
     const convId = await store.getOrCreateConversation(123);
     await store.saveMessage(convId, "user", "Hello");
     await store.saveMessage(convId, "assistant", "Hi there!");
     await store.updateSessionTitle(convId, "Existing Title");
 
     const result = await maybeAutoTitleSession(convId, store);
-    expect(result).toBeNull();
+    expect(result).toBe("Existing Title");
   });
 
   it("skips titling and enforces quota check when daily LLM quota is reached", async () => {
