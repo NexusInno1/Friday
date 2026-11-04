@@ -80,6 +80,7 @@ export interface Database {
           tool_name: string | null;
           tool_call_id: string | null;
           tokens_used: number | null;
+          compacted_at?: string | null;
           created_at: string;
         };
         Insert: {
@@ -90,6 +91,7 @@ export interface Database {
           tool_name?: string | null;
           tool_call_id?: string | null;
           tokens_used?: number | null;
+          compacted_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -100,6 +102,7 @@ export interface Database {
           tool_name?: string | null;
           tool_call_id?: string | null;
           tokens_used?: number | null;
+          compacted_at?: string | null;
           created_at?: string;
         };
         Relationships: [];

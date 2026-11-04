@@ -42,6 +42,7 @@ export interface DataStore {
     cutoffDateIso: string
   ): Promise<number>;
   deleteMessagesByIds(messageIds: string[]): Promise<number>;
+  markMessagesCompacted(messageIds: string[]): Promise<number>;
 
   // ─── Sessions & History Search ─────────────────────────
   listSessions(chatId: number, limit?: number): Promise<ConversationSession[]>;

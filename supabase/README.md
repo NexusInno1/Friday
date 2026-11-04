@@ -21,8 +21,8 @@ FRIDAY uses **Supabase** (PostgreSQL with `pgvector`) to store:
 
 1. In your Supabase project dashboard, open the **SQL Editor** from the left navigation.
 2. Click **"New query"**.
-3. For a **new project**, apply [`schema.sql`](./schema.sql), which is the complete corrected schema. Alternatively, apply the numbered migrations in order: `001_add_memory_superseding.sql`, `002_fix_match_memories_rpc.sql`, `003_add_reminder_leases.sql`, `004_add_session_metadata_and_search.sql`, `005_enable_rls.sql`, then `006_enforce_single_active_conversation.sql`.
-4. For an **existing FRIDAY database**, do not re-run the initial schema. Apply any unapplied migrations from [`migrations/`](./migrations/) in numerical order (`001` through `006`).
+3. For a **new project**, apply [`schema.sql`](./schema.sql), which is the complete corrected schema. Alternatively, apply the numbered migrations in order: `001` through `007` from [`migrations/`](./migrations/).
+4. For an **existing FRIDAY database**, do not re-run the initial schema. Apply any unapplied migrations from [`migrations/`](./migrations/) in numerical order (`001` through `007`).
 5. Click **"Run"** (or press `Ctrl+Enter`) after each migration.
 
 `schema.sql` remains the complete reference schema for new provisioning. The numbered migrations are the authoritative path for an existing deployment. You should see `Success. No rows returned` after each SQL script.

@@ -34,11 +34,12 @@ export function createHealthApp(store?: DataStore): express.Express {
         uptime: process.uptime(),
       });
     } catch (err) {
+      console.error("[health] Database readiness check failed:", err);
       res.status(503).json({
         status: "unhealthy",
         service: "friday-ai-assistant",
         database: "disconnected",
-        error: err instanceof Error ? err.message : "Database check failed",
+        error: "Database check failed",
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
       });
