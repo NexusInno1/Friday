@@ -63,15 +63,35 @@ export function getModel(providerOverride?: "gemini" | "groq" | "openai"): Langu
 
 /**
  * Returns available fallback models in priority order:
- * 1. Groq (llama-3.3-70b-versatile) if GROQ_API_KEY is configured
- * 2. OpenAI (gpt-4o) if OPENAI_API_KEY is configured
+ * - Gemini (if not primary and GEMINI_API_KEY is configured)
+ * - Groq (llama-3.3-70b-versatile, if not primary and GROQ_API_KEY is configured)
+ * - OpenAI (gpt-4o, if not primary and OPENAI_API_KEY is configured)
  */
 export function getFallbackChain(primaryProvider?: string): FallbackModelDescriptor[] {
-  const { DEFAULT_LLM_PROVIDER, OPENAI_API_KEY, OPENAI_MODEL, GROQ_API_KEY, GROQ_MODEL } = env();
+  const {
+    DEFAULT_LLM_PROVIDER,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+  } = env();
   const primary = primaryProvider ?? DEFAULT_LLM_PROVIDER;
   const fallbacks: FallbackModelDescriptor[] = [];
 
-  // Tier 2: Groq (if key present and not primary)
+  // Gemini (if key present and not primary)
+  if (primary !== "gemini" && GEMINI_API_KEY) {
+    const google = createGoogleGenerativeAI({ apiKey: GEMINI_API_KEY });
+    const modelName = resolveGeminiModel(GEMINI_MODEL);
+    fallbacks.push({
+      provider: "Gemini",
+      modelName,
+      model: google(modelName),
+    });
+  }
+
+  // Groq (if key present and not primary)
   if (primary !== "groq" && GROQ_API_KEY) {
     const groq = createOpenAI({
       baseURL: "https://api.groq.com/openai/v1",
@@ -84,7 +104,7 @@ export function getFallbackChain(primaryProvider?: string): FallbackModelDescrip
     });
   }
 
-  // Tier 3: OpenAI (if key present and not primary)
+  // OpenAI (if key present and not primary)
   if (primary !== "openai" && OPENAI_API_KEY) {
     const openai = createOpenAI({ apiKey: OPENAI_API_KEY });
     const modelName = OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
@@ -129,9 +149,11 @@ export function isRetriableModelError(error: unknown): boolean {
     return true;
   }
 
-  if (typeof error === "object" && error !== null && "status" in error) {
-    const status = (error as { status?: number }).status;
-    if (status === 429 || (typeof status === "number" && status >= 500 && status <= 504)) {
+  if (typeof error === "object" && error !== null) {
+    const errObj = error as { status?: unknown; statusCode?: unknown };
+    const rawStatus = errObj.status ?? errObj.statusCode;
+    const status = typeof rawStatus === "number" ? rawStatus : Number(rawStatus);
+    if (status === 429 || (status >= 500 && status <= 504)) {
       return true;
     }
   }

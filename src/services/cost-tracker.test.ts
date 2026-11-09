@@ -5,7 +5,7 @@ import {
   resetDailyUsage,
 } from "./cost-tracker.service.js";
 import * as alertService from "./alert.service.js";
-import { env } from "../config/env.js";
+import { env, setEnv } from "../config/env.js";
 
 describe("CostTrackerService", () => {
   beforeEach(() => {
@@ -69,5 +69,26 @@ describe("CostTrackerService", () => {
       expect.any(Error),
       expect.objectContaining({ resource: "tavily", count: cap, cap })
     );
+  });
+
+  it("handles zero cap gracefully without dividing by zero or producing Infinity", async () => {
+    const originalEnv = env();
+    try {
+      setEnv({
+        ...originalEnv,
+        DAILY_LLM_CALL_CAP: 0,
+      });
+
+      const usage = getDailyUsage("llm");
+      expect(usage.percentage).toBe(0);
+      expect(Number.isFinite(usage.percentage)).toBe(true);
+
+      const res = await checkAndIncrementUsage("llm");
+      expect(res.allowed).toBe(false);
+      expect(res.percentage).toBe(100);
+      expect(Number.isFinite(res.percentage)).toBe(true);
+    } finally {
+      setEnv(originalEnv);
+    }
   });
 });

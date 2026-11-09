@@ -8,6 +8,7 @@ import {
   BRIEFING_CATEGORIES,
   formatToIST,
   extractAnalysisAndAuthor,
+  isLowQualityTitle,
 } from "./scheduler.service.js";
 import { env, setEnv } from "../config/env.js";
 
@@ -45,7 +46,8 @@ describe("ProactiveScheduler", () => {
   });
 
   it("snoozes a reminder through scheduler interface", async () => {
-    const triggerAt = "2026-08-28T10:00:00.000Z";
+    const futureMs = Date.now() + 3600 * 1000;
+    const triggerAt = new Date(futureMs).toISOString();
     const reminder = await store.createReminder({
       userId: 123456789,
       chatId: 123456789,
@@ -54,7 +56,7 @@ describe("ProactiveScheduler", () => {
     });
 
     const result = await scheduler.snooze(reminder.id, 15);
-    expect(result.newTriggerAt).toBe("2026-08-28T10:15:00.000Z");
+    expect(result.newTriggerAt).toBe(new Date(futureMs + 15 * 60 * 1000).toISOString());
   });
 
   it("cancels a reminder through scheduler interface", async () => {
@@ -227,22 +229,22 @@ describe("ProactiveScheduler", () => {
       expect(categoryLabels).not.toContain("Sports");
       expect(categoryLabels).toEqual([
         "International",
-        "Business & Economy",
+
         "AI & Technology",
         "Regional (India)",
       ]);
     });
 
-    it("configures briefing categories with updated targets (Total: 18 items max)", () => {
+    it("configures briefing categories with updated targets (Total: 14 items max)", () => {
       const counts = BRIEFING_CATEGORIES.map((c) => ({ label: c.label, count: c.count }));
       expect(counts).toEqual([
         { label: "International", count: 5 },
-        { label: "Business & Economy", count: 4 },
+
         { label: "AI & Technology", count: 4 },
         { label: "Regional (India)", count: 5 },
       ]);
       const total = BRIEFING_CATEGORIES.reduce((acc, c) => acc + (c.count ?? 0), 0);
-      expect(total).toBe(18);
+      expect(total).toBe(14);
     });
 
     it("appends 'Only N significant items today' when category has fewer items than target", async () => {
@@ -641,6 +643,46 @@ describe("ProactiveScheduler", () => {
       } finally {
         setEnv(current);
       }
+    });
+
+    it("respects briefingDate override and records specified date without burning today's briefing", async () => {
+      const store = new (await import("../db/in-memory-datastore.js")).InMemoryDataStore();
+      const dispatcher = new InMemoryDispatcher();
+      const scheduler = new ProactiveScheduler({ store, dispatcher });
+
+      const targetDate = "2026-11-08";
+      const success = await scheduler.sendDailyBriefing({ briefingDate: targetDate });
+
+      expect(success).toBe(true);
+      const lastDate = await store.getLastBriefingDate(env().TELEGRAM_ALLOWED_USER_ID);
+      expect(lastDate).toBe(targetDate);
+
+      // Verify today's briefing date can still be claimed
+      const todayDateStr = new Date().toLocaleDateString("en-CA", { timeZone: env().USER_TIMEZONE });
+      const claimedToday = await store.claimDailyBriefing(
+        env().TELEGRAM_ALLOWED_USER_ID,
+        todayDateStr,
+        new Date().toISOString()
+      );
+      expect(claimedToday).toBe(true);
+    });
+
+    it("does not reject legitimate news articles ending with pipe and Indian news outlets", () => {
+      expect(
+        isLowQualityTitle(
+          "Cabinet approves Rs 10,000 crore semiconductor incentive package | The Indian Express"
+        )
+      ).toBe(false);
+      expect(
+        isLowQualityTitle(
+          "RBI keeps repo rate unchanged at 6.5 percent amid inflation concerns | Livemint"
+        )
+      ).toBe(false);
+      expect(
+        isLowQualityTitle(
+          "Supreme Court issues landmark verdict on environmental clearances | Hindustan Times"
+        )
+      ).toBe(false);
     });
 
     it("respects Tavily daily cap and pauses search calls when limit reached", async () => {

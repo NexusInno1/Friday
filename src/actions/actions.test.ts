@@ -38,6 +38,13 @@ describe("Core Actions", () => {
       expect(computeSnoozedTime(base, 60)).toBe("2026-08-28T11:00:00.000Z");
     });
 
+    it("computes snooze relative to baseTimeMs when provided", () => {
+      const pastTrigger = "2026-08-28T09:00:00.000Z";
+      const snoozeOccurredAt = new Date("2026-08-28T09:30:00.000Z").getTime();
+      const snoozed = computeSnoozedTime(pastTrigger, 15, snoozeOccurredAt);
+      expect(snoozed).toBe("2026-08-28T09:45:00.000Z");
+    });
+
     it("throws error for non-positive minutes", () => {
       expect(() => computeSnoozedTime("2026-08-28T10:00:00.000Z", 0)).toThrow(/positive/i);
     });
@@ -45,7 +52,8 @@ describe("Core Actions", () => {
 
   describe("Reminder Actions", () => {
     it("creates, snoozes, and cancels a reminder", async () => {
-      const triggerAt = "2026-08-28T12:00:00.000Z";
+      const triggerTimeMs = Date.now() + 3600 * 1000;
+      const triggerAt = new Date(triggerTimeMs).toISOString();
       const reminder = await createReminderAction(
         {
           userId: 100,
@@ -66,8 +74,9 @@ describe("Core Actions", () => {
         100,
         store
       );
-      expect(newTriggerAt).toBe("2026-08-28T12:15:00.000Z");
-      expect(snoozed.trigger_at).toBe("2026-08-28T12:15:00.000Z");
+      const expectedSnooze = new Date(triggerTimeMs + 15 * 60 * 1000).toISOString();
+      expect(newTriggerAt).toBe(expectedSnooze);
+      expect(snoozed.trigger_at).toBe(expectedSnooze);
 
       // Cancel
       const cancelled = await cancelReminderAction(reminder.id, 100, store);
@@ -75,6 +84,70 @@ describe("Core Actions", () => {
 
       const activeList = await store.listActiveReminders(100);
       expect(activeList.length).toBe(0);
+    });
+
+    it("snoozes a past-triggered reminder relative to current time rather than past trigger time", async () => {
+      const pastTime = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      const reminder = await createReminderAction(
+        {
+          userId: 100,
+          chatId: 100,
+          message: "Past reminder",
+          triggerAt: pastTime,
+        },
+        store
+      );
+
+      // Reminder was previously triggered and delivered by the scheduler
+      await store.updateReminder(reminder.id, { is_completed: true });
+
+      const before = Date.now();
+      const { reminder: snoozed, newTriggerAt } = await snoozeReminderAction(
+        reminder.id,
+        15,
+        100,
+        store
+      );
+      const after = Date.now();
+
+      const newTime = new Date(newTriggerAt).getTime();
+      expect(newTime).toBeGreaterThanOrEqual(before + 15 * 60 * 1000);
+      expect(newTime).toBeLessThanOrEqual(after + 15 * 60 * 1000);
+      expect(snoozed.trigger_at).toBe(newTriggerAt);
+      expect(newTime).toBeGreaterThan(Date.now());
+      expect(snoozed.sent_at).toBeNull();
+      expect(snoozed.is_completed).toBe(false);
+    });
+
+    it("snoozes an overdue undelivered reminder relative to current time rather than past trigger time", async () => {
+      const pastTime = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      const reminder = await createReminderAction(
+        {
+          userId: 100,
+          chatId: 100,
+          message: "Overdue undelivered reminder",
+          triggerAt: pastTime,
+        },
+        store
+      );
+
+      expect(reminder.is_completed).toBe(false);
+      expect(reminder.delivery_attempts).toBe(0);
+
+      const before = Date.now();
+      const { reminder: snoozed, newTriggerAt } = await snoozeReminderAction(
+        reminder.id,
+        15,
+        100,
+        store
+      );
+      const after = Date.now();
+
+      const newTime = new Date(newTriggerAt).getTime();
+      expect(newTime).toBeGreaterThanOrEqual(before + 15 * 60 * 1000);
+      expect(newTime).toBeLessThanOrEqual(after + 15 * 60 * 1000);
+      expect(snoozed.trigger_at).toBe(newTriggerAt);
+      expect(newTime).toBeGreaterThan(Date.now());
     });
 
     it("accepts valid cron expression for recurring reminder", async () => {
@@ -123,6 +196,89 @@ describe("Core Actions", () => {
           store
         )
       ).rejects.toThrow(/Recurring reminders require a valid cron expression/);
+    });
+
+    it("rejects empty or whitespace-only reminder message on creation", async () => {
+      await expect(
+        createReminderAction(
+          {
+            userId: 100,
+            chatId: 100,
+            message: "",
+            triggerAt: new Date().toISOString(),
+          },
+          store
+        )
+      ).rejects.toThrow("Reminder message cannot be empty.");
+
+      await expect(
+        createReminderAction(
+          {
+            userId: 100,
+            chatId: 100,
+            message: "   \t\n  ",
+            triggerAt: new Date().toISOString(),
+          },
+          store
+        )
+      ).rejects.toThrow("Reminder message cannot be empty.");
+    });
+
+    it("clears sent_at to null and resets is_completed to false when snoozing a delivered reminder", async () => {
+      const pastTime = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const reminder = await createReminderAction(
+        {
+          userId: 100,
+          chatId: 100,
+          message: "Delivered reminder to be snoozed",
+          triggerAt: pastTime,
+        },
+        store
+      );
+
+      // Simulate scheduler delivery: marks completed and sets sent_at timestamp
+      await store.updateReminder(reminder.id, {
+        is_completed: true,
+        sent_at: new Date().toISOString(),
+      });
+      const delivered = await store.getReminder(reminder.id, 100);
+      expect(delivered?.is_completed).toBe(true);
+      expect(delivered?.sent_at).toBeTruthy();
+
+      // User triggers snooze (+15m)
+      const { reminder: snoozed } = await snoozeReminderAction(reminder.id, 15, 100, store);
+
+      expect(snoozed.is_completed).toBe(false);
+      expect(snoozed.sent_at).toBeNull();
+
+      // Confirm datastore has persisted sent_at: null
+      const fromStore = await store.getReminder(reminder.id, 100);
+      expect(fromStore?.is_completed).toBe(false);
+      expect(fromStore?.sent_at).toBeNull();
+    });
+
+    it("rejects snoozing a cancelled reminder with an error", async () => {
+      const reminder = await createReminderAction(
+        {
+          userId: 100,
+          chatId: 100,
+          message: "Cancelled reminder",
+          triggerAt: new Date(Date.now() + 3600 * 1000).toISOString(),
+        },
+        store
+      );
+
+      await cancelReminderAction(reminder.id, 100, store);
+      const cancelled = await store.getReminder(reminder.id, 100);
+      expect(cancelled?.is_cancelled).toBe(true);
+
+      await expect(
+        snoozeReminderAction(reminder.id, 15, 100, store)
+      ).rejects.toThrow("Cannot snooze a cancelled reminder.");
+
+      // Verify the reminder remains cancelled in the datastore
+      const fromStore = await store.getReminder(reminder.id, 100);
+      expect(fromStore?.is_cancelled).toBe(true);
     });
   });
 
@@ -263,6 +419,23 @@ describe("Core Actions", () => {
         expect(result.results.length).toBe(1);
         expect(result.results[0].publishedDate).toBe("Sun, 13 Sep 2026 12:00:00 GMT");
         expect(result.results[0].title).toBe("Test News Article");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("redacts TAVILY_API_KEY if search fails with error response containing the key", async () => {
+      const originalFetch = globalThis.fetch;
+      const fakeKey = env().TAVILY_API_KEY;
+      globalThis.fetch = async () => ({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => `Invalid token: ${fakeKey} was rejected`,
+      } as any);
+
+      try {
+        await expect(webSearchAction("testing error")).rejects.toThrow(/\[REDACTED\]/);
       } finally {
         globalThis.fetch = originalFetch;
       }

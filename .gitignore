@@ -11,9 +11,9 @@ skills-lock.json
 
 # Environment
 .env
+.env.*
+!.env.example
 .scratch/
-.env.local
-.env.*.local
 
 # Logs
 *.log

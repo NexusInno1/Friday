@@ -222,6 +222,69 @@ export async function runFactCompaction(
   };
 }
 
+/**
+ * Extracts a balanced JSON array or object from text by matching delimiters
+ * while ignoring brackets/braces inside string literals and handling escape characters.
+ */
+function extractBalancedJson(text: string): string {
+  const firstBracket = text.indexOf("[");
+  const firstBrace = text.indexOf("{");
+
+  if (firstBracket === -1 && firstBrace === -1) {
+    return text;
+  }
+
+  // Determine which structure opens first: array or object
+  const useBracket = firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace);
+  const startChar = useBracket ? "[" : "{";
+  const endChar = useBracket ? "]" : "}";
+  const startIndex = useBracket ? firstBracket : firstBrace;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = startIndex; i < text.length; i++) {
+    const char = text[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      if (inString) {
+        escape = true;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (char === startChar) {
+        depth++;
+      } else if (char === endChar) {
+        depth--;
+        if (depth === 0) {
+          return text.slice(startIndex, i + 1).trim();
+        }
+      }
+    }
+  }
+
+  // Fallback if closing delimiter not matched due to truncation
+  const lastEndIndex = text.lastIndexOf(endChar);
+  if (lastEndIndex > startIndex) {
+    return text.slice(startIndex, lastEndIndex + 1).trim();
+  }
+
+  return text;
+}
+
 export function cleanJsonText(rawText: string): string {
   let cleaned = rawText.trim();
   const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
@@ -229,23 +292,9 @@ export function cleanJsonText(rawText: string): string {
     cleaned = codeBlockMatch[1].trim();
   } else if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  } else {
-    // If no code fence, attempt to extract outermost JSON structure (honoring whichever opens first)
-    const firstBracket = cleaned.indexOf("[");
-    const firstBrace = cleaned.indexOf("{");
-    if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
-      const arrayMatch = cleaned.match(/(\[[\s\S]*\])/);
-      if (arrayMatch) {
-        cleaned = arrayMatch[1].trim();
-      }
-    } else if (firstBrace !== -1) {
-      const objectMatch = cleaned.match(/(\{[\s\S]*\})/);
-      if (objectMatch) {
-        cleaned = objectMatch[1].trim();
-      }
-    }
   }
-  return cleaned;
+
+  return extractBalancedJson(cleaned);
 }
 
 export async function extractFacts(

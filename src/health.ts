@@ -9,6 +9,17 @@ import type { DataStore } from "./db/datastore.js";
  */
 export function createHealthApp(store?: DataStore): express.Express {
   const app = express();
+  app.disable("x-powered-by");
+
+  // OWASP Recommended Security Headers
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Content-Security-Policy", "default-src 'none'");
+    next();
+  });
+
   app.use(express.json());
 
   // Fast liveness probe (200 OK)
@@ -48,6 +59,20 @@ export function createHealthApp(store?: DataStore): express.Express {
 
   app.get("/", (_req, res) => {
     res.status(200).send("FRIDAY AI Assistant is running.");
+  });
+
+  // Global boundary error handler for malformed request payloads
+  app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err instanceof SyntaxError && "status" in err && (err as any).status === 400) {
+      res.status(400).json({
+        error: {
+          code: "MALFORMED_JSON",
+          message: "Request body contains invalid JSON.",
+        },
+      });
+      return;
+    }
+    next(err);
   });
 
   return app;

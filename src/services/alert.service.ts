@@ -1,4 +1,5 @@
 import { env } from "../config/env.js";
+import { redactSecrets } from "../utils/sanitize.js";
 
 export type CriticalAlertType =
   | "embedding_failure"
@@ -25,6 +26,7 @@ export function resetAlertRateLimits(): void {
 
 /**
  * Dispatches a rate-limited critical alert to the owner via Telegram.
+ * Automatically sanitizes all error messages and context objects to prevent secret leakage.
  */
 export async function sendCriticalAlert(
   type: CriticalAlertType,
@@ -40,17 +42,18 @@ export async function sendCriticalAlert(
     return false;
   }
 
-  _lastAlertTimestamps.set(type, now);
-
-  const errorMessage = error instanceof Error ? error.message : String(error);
-  const contextStr = details ? `\n\nContext:\n\`\`\`json\n${JSON.stringify(details, null, 2)}\n\`\`\`` : "";
+  const rawErrorMessage = error instanceof Error ? error.message : String(error);
+  const errorMessage = redactSecrets(rawErrorMessage);
+  const rawContextStr = details ? `\n\nContext:\n\`\`\`json\n${JSON.stringify(details, null, 2)}\n\`\`\`` : "";
+  const contextStr = redactSecrets(rawContextStr);
   const alertText = `🚨 **CRITICAL ALERT: ${type}**\n\n${errorMessage}${contextStr}`;
 
-  console.error(`[alert:${type}]`, errorMessage, details ?? "");
+  console.error(`[alert:${type}]`, errorMessage, details ? redactSecrets(JSON.stringify(details)) : "");
 
   if (_alertDispatcher) {
     try {
       await _alertDispatcher.sendAlert(alertText);
+      _lastAlertTimestamps.set(type, now);
       return true;
     } catch (dispatchErr) {
       console.error("[alert] Failed to send alert message via dispatcher:", dispatchErr);

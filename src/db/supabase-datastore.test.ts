@@ -129,3 +129,124 @@ describe("SupabaseDataStore - getOrCreateConversation", () => {
     expect(convId).toBe(activeConvId);
   });
 });
+
+describe("SupabaseDataStore - listSessions", () => {
+  it("uses exact HEAD count queries for message counts without downloading all message rows", async () => {
+    const mockSessions = [
+      {
+        id: "conv-1",
+        telegram_chat_id: 12345,
+        title: "Session 1",
+        summary: null,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ];
+
+    const mockConvQuery: any = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({ data: mockSessions, error: null }),
+    };
+
+    const mockCountQuery: any = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockResolvedValue({ count: 42, error: null }),
+    };
+
+    const mockClient: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "conversations") return mockConvQuery;
+        if (table === "messages") return mockCountQuery;
+        throw new Error(`Unexpected table: ${table}`);
+      }),
+    };
+
+    const store = new SupabaseDataStore(mockClient);
+    const sessions = await store.listSessions(12345);
+
+    expect(sessions.length).toBe(1);
+    expect(sessions[0].messageCount).toBe(42);
+    expect(mockCountQuery.select).toHaveBeenCalledWith("id", { count: "exact", head: true });
+    expect(mockCountQuery.eq).toHaveBeenCalledWith("conversation_id", "conv-1");
+  });
+});
+
+describe("SupabaseDataStore - clearConversation", () => {
+  it("logs conversation_cleared activity even when userId is omitted", async () => {
+    const mockUpdateBuilder: any = {
+      eq: vi.fn().mockReturnThis(),
+      then: (resolve: any) => Promise.resolve({ error: null }).then(resolve),
+    };
+
+    const mockInsertBuilder: any = {
+      insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+
+    const mockClient: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "conversations") {
+          return {
+            update: vi.fn().mockReturnValue(mockUpdateBuilder),
+          };
+        }
+        if (table === "activity_logs") {
+          return mockInsertBuilder;
+        }
+        throw new Error(`Unexpected table: ${table}`);
+      }),
+    };
+
+    const store = new SupabaseDataStore(mockClient);
+    await store.clearConversation(98765);
+
+    expect(mockClient.from).toHaveBeenCalledWith("conversations");
+    expect(mockUpdateBuilder.eq).toHaveBeenCalledWith("telegram_chat_id", 98765);
+    expect(mockUpdateBuilder.eq).toHaveBeenCalledWith("is_active", true);
+
+    expect(mockClient.from).toHaveBeenCalledWith("activity_logs");
+    expect(mockInsertBuilder.insert).toHaveBeenCalledWith({
+      user_id: null,
+      event_type: "conversation_cleared",
+      payload: { chat_id: 98765 },
+      error: null,
+    });
+  });
+
+  it("logs conversation_cleared activity with userId when provided", async () => {
+    const mockUpdateBuilder: any = {
+      eq: vi.fn().mockReturnThis(),
+      then: (resolve: any) => Promise.resolve({ error: null }).then(resolve),
+    };
+
+    const mockInsertBuilder: any = {
+      insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+
+    const mockClient: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "conversations") {
+          return {
+            update: vi.fn().mockReturnValue(mockUpdateBuilder),
+          };
+        }
+        if (table === "activity_logs") {
+          return mockInsertBuilder;
+        }
+        throw new Error(`Unexpected table: ${table}`);
+      }),
+    };
+
+    const store = new SupabaseDataStore(mockClient);
+    await store.clearConversation(98765, 42);
+
+    expect(mockInsertBuilder.insert).toHaveBeenCalledWith({
+      user_id: 42,
+      event_type: "conversation_cleared",
+      payload: { chat_id: 98765 },
+      error: null,
+    });
+  });
+});

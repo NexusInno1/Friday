@@ -9,6 +9,14 @@ describe("parseTimeString", () => {
     expect(parseTimeString("23:59")).toBe("23:59");
   });
 
+  it("parses 24-hour format with seconds (HH:MM:SS) correctly", () => {
+    expect(parseTimeString("07:00:00")).toBe("07:00");
+    expect(parseTimeString("23:59:59")).toBe("23:59");
+    expect(parseTimeString("7:05:30")).toBe("07:05");
+    expect(parseTimeString("00:00:00")).toBe("00:00");
+    expect(parseTimeString("18.45.12")).toBe("18:45");
+  });
+
   it("normalizes single-digit hour 24-hour format H:MM to HH:MM", () => {
     expect(parseTimeString("7:00")).toBe("07:00");
     expect(parseTimeString("8:30")).toBe("08:30");

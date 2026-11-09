@@ -45,11 +45,13 @@ CREATE TABLE IF NOT EXISTS messages (
   tool_name       TEXT,
   tool_call_id    TEXT,
   tokens_used     INTEGER,
+  compacted_at    TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_compacted_at ON messages (conversation_id, created_at) WHERE compacted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_content_fts ON messages USING gin(to_tsvector('english', content));
 
 -- ============================================================
@@ -140,12 +142,31 @@ CREATE TABLE IF NOT EXISTS reminders (
   lease_until      TIMESTAMPTZ,
   delivery_attempts INT NOT NULL DEFAULT 0,
   telegram_chat_id BIGINT NOT NULL,
+  sent_at          TIMESTAMPTZ,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_reminders_user_id ON reminders(user_id);
 CREATE INDEX IF NOT EXISTS idx_reminders_trigger_at ON reminders(trigger_at)
   WHERE is_completed = FALSE AND is_cancelled = FALSE;
+
+-- ============================================================
+-- SCHEDULED BRIEFINGS (concurrency-safe daily digest claims)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS scheduled_briefings (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id       BIGINT NOT NULL,
+  briefing_date DATE NOT NULL,
+  scheduled_at  TIMESTAMPTZ NOT NULL,
+  claimed_at    TIMESTAMPTZ,
+  sent_at       TIMESTAMPTZ,
+  model_used    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_user_briefing_date UNIQUE (user_id, briefing_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_briefings_lookup
+  ON scheduled_briefings (user_id, briefing_date);
 
 -- ============================================================
 -- ACTIVITY LOGS
@@ -183,3 +204,50 @@ CREATE TRIGGER update_conversations_updated_at
 CREATE TRIGGER update_memories_updated_at
   BEFORE UPDATE ON memories
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- ROW LEVEL SECURITY (RLS) & PRIVILEGE LOCKDOWN
+-- ============================================================
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reminders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scheduled_briefings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "service_role_all_user_profiles" ON user_profiles;
+CREATE POLICY "service_role_all_user_profiles" ON user_profiles FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "service_role_all_conversations" ON conversations;
+CREATE POLICY "service_role_all_conversations" ON conversations FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "service_role_all_messages" ON messages;
+CREATE POLICY "service_role_all_messages" ON messages FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "service_role_all_memories" ON memories;
+CREATE POLICY "service_role_all_memories" ON memories FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "service_role_all_reminders" ON reminders;
+CREATE POLICY "service_role_all_reminders" ON reminders FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "service_role_all_scheduled_briefings" ON scheduled_briefings;
+CREATE POLICY "service_role_all_scheduled_briefings" ON scheduled_briefings FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "service_role_all_activity_logs" ON activity_logs;
+CREATE POLICY "service_role_all_activity_logs" ON activity_logs FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM anon, authenticated;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON ROUTINES FROM anon, authenticated;
+
+REVOKE EXECUTE ON FUNCTION match_memories(vector, double precision, integer, bigint) FROM PUBLIC, anon, authenticated;
+
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO service_role;
+GRANT EXECUTE ON FUNCTION match_memories(vector, double precision, integer, bigint) TO service_role;

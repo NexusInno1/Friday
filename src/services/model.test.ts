@@ -30,6 +30,7 @@ describe("model.service", () => {
       expect(isRetriableModelError(new Error("429 Too Many Requests"))).toBe(true);
       expect(isRetriableModelError(new Error("Resource exhausted: quota exceeded"))).toBe(true);
       expect(isRetriableModelError({ status: 429 })).toBe(true);
+      expect(isRetriableModelError({ statusCode: 429 })).toBe(true);
     });
 
     it("returns true for 5xx upstream outages", () => {
@@ -38,6 +39,10 @@ describe("model.service", () => {
       expect(isRetriableModelError(new Error("502 Bad Gateway"))).toBe(true);
       expect(isRetriableModelError(new Error("504 Gateway Timeout"))).toBe(true);
       expect(isRetriableModelError({ status: 503 })).toBe(true);
+      expect(isRetriableModelError({ statusCode: 500 })).toBe(true);
+      expect(isRetriableModelError({ statusCode: 502 })).toBe(true);
+      expect(isRetriableModelError({ statusCode: 503 })).toBe(true);
+      expect(isRetriableModelError({ statusCode: 504 })).toBe(true);
     });
 
     it("returns true for network connection failures and timeouts", () => {
@@ -51,6 +56,8 @@ describe("model.service", () => {
     it("returns false for non-retriable client and syntax errors", () => {
       expect(isRetriableModelError(new Error("400 Bad Request: Invalid tool parameter"))).toBe(false);
       expect(isRetriableModelError(new Error("SyntaxError: Unexpected token"))).toBe(false);
+      expect(isRetriableModelError({ status: 400 })).toBe(false);
+      expect(isRetriableModelError({ statusCode: 400 })).toBe(false);
       expect(isRetriableModelError(null)).toBe(false);
       expect(isRetriableModelError(undefined)).toBe(false);
     });
@@ -69,7 +76,7 @@ describe("model.service", () => {
       expect(chain).toEqual([]);
     });
 
-    it("returns Groq and OpenAI when both keys are present", () => {
+    it("returns Groq and OpenAI when both keys are present and Gemini is primary", () => {
       setEnv({
         ...baseEnv,
         DEFAULT_LLM_PROVIDER: "gemini",
@@ -86,7 +93,7 @@ describe("model.service", () => {
       expect(chain[1].modelName).toBe("gpt-4o");
     });
 
-    it("excludes Groq from fallback chain if Groq is primary provider", () => {
+    it("includes Gemini in fallback chain and excludes Groq if Groq is primary provider", () => {
       setEnv({
         ...baseEnv,
         DEFAULT_LLM_PROVIDER: "groq",
@@ -95,8 +102,23 @@ describe("model.service", () => {
       });
 
       const chain = getFallbackChain("groq");
-      expect(chain.length).toBe(1);
-      expect(chain[0].provider).toBe("OpenAI");
+      expect(chain.length).toBe(2);
+      expect(chain[0].provider).toBe("Gemini");
+      expect(chain[1].provider).toBe("OpenAI");
+    });
+
+    it("includes Gemini in fallback chain and excludes OpenAI if OpenAI is primary provider", () => {
+      setEnv({
+        ...baseEnv,
+        DEFAULT_LLM_PROVIDER: "openai",
+        GROQ_API_KEY: "gsk_test_key",
+        OPENAI_API_KEY: "sk-openai-key",
+      });
+
+      const chain = getFallbackChain("openai");
+      expect(chain.length).toBe(2);
+      expect(chain[0].provider).toBe("Gemini");
+      expect(chain[1].provider).toBe("Groq");
     });
   });
 

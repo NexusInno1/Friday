@@ -86,7 +86,7 @@ export async function checkAndIncrementUsage(
   // Increment usage
   _currentUsage[resource] += 1;
   const newCount = _currentUsage[resource];
-  const percentage = (newCount / cap) * 100;
+  const percentage = cap > 0 ? (newCount / cap) * 100 : 0;
 
   // Check 80% warning threshold
   const warnedFlag = resource === "llm" ? _currentUsage.warnedLlm80 : _currentUsage.warnedTavily80;

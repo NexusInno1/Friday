@@ -5,6 +5,7 @@ import {
   resetAlertRateLimits,
   type AlertDispatcher,
 } from "./alert.service.js";
+import { env, setEnv } from "../config/env.js";
 
 describe("AlertService", () => {
   let mockDispatcher: AlertDispatcher;
@@ -42,5 +43,45 @@ describe("AlertService", () => {
     await sendCriticalAlert("all_models_down", new Error("Models down"));
 
     expect(mockDispatcher.sendAlert).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not lock out alerts when dispatcher is null, permitting alert once dispatcher is set", async () => {
+    setAlertDispatcher(null);
+    const sentBefore = await sendCriticalAlert("embedding_failure", new Error("Initial failure"));
+    expect(sentBefore).toBe(false);
+
+    // Now set dispatcher; alert should NOT be suppressed by rate limit
+    setAlertDispatcher(mockDispatcher);
+    const sentAfter = await sendCriticalAlert("embedding_failure", new Error("Subsequent failure"));
+    expect(sentAfter).toBe(true);
+    expect(mockDispatcher.sendAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not lock out alerts when dispatch throws, allowing immediate retry", async () => {
+    mockDispatcher.sendAlert = vi.fn().mockRejectedValueOnce(new Error("Network glitch")).mockResolvedValueOnce(undefined);
+
+    const firstAttempt = await sendCriticalAlert("all_models_down", new Error("Outage"));
+    expect(firstAttempt).toBe(false);
+
+    // Immediate retry should NOT be suppressed because first attempt failed
+    const retryAttempt = await sendCriticalAlert("all_models_down", new Error("Outage retry"));
+    expect(retryAttempt).toBe(true);
+    expect(mockDispatcher.sendAlert).toHaveBeenCalledTimes(2);
+  });
+
+  it("automatically redacts sensitive API keys from error messages and details", async () => {
+    const realKey = "sk_live_secret_real_key_123456";
+    setEnv({
+      ...env(),
+      GEMINI_API_KEY: realKey,
+    });
+
+    const error = new Error(`Connection failed with key: ${realKey}`);
+    await sendCriticalAlert("embedding_failure", error, { keyAttempted: realKey });
+
+    expect(mockDispatcher.sendAlert).toHaveBeenCalledTimes(1);
+    const alertMessage = (mockDispatcher.sendAlert as any).mock.calls[0][0];
+    expect(alertMessage).not.toContain(realKey);
+    expect(alertMessage).toContain("[REDACTED]");
   });
 });

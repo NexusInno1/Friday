@@ -103,4 +103,38 @@ describe("Health Server Endpoints", () => {
     expect(status).toBe(200);
     expect(body).toContain("FRIDAY AI Assistant is running");
   });
+
+  it("handles malformed JSON body with 400 and structured error body", () => {
+    const app = createHealthApp(new InMemoryDataStore());
+    const err = new SyntaxError("Unexpected token in JSON at position 0");
+    (err as any).status = 400;
+
+    let resStatus = 0;
+    let resBody: any = null;
+    const res = {
+      status(code: number) {
+        resStatus = code;
+        return this;
+      },
+      json(data: any) {
+        resBody = data;
+        return this;
+      },
+    };
+
+    const errorMiddleware = (app as any)._router.stack.find(
+      (layer: any) => layer.handle?.length === 4
+    )?.handle;
+    expect(errorMiddleware).toBeDefined();
+
+    errorMiddleware(err, {}, res, () => {});
+
+    expect(resStatus).toBe(400);
+    expect(resBody).toEqual({
+      error: {
+        code: "MALFORMED_JSON",
+        message: "Request body contains invalid JSON.",
+      },
+    });
+  });
 });

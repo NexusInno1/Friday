@@ -32,7 +32,7 @@ export function parseTimeString(input: string): string {
   }
 
   // 2. Try 24-hour format (e.g., "08:30", "8:30", "08.30", "19:00", "23:59")
-  const hour24Regex = /^([01]?\d|2[0-3])[:.]([0-5]\d)$/;
+  const hour24Regex = /^([01]?\d|2[0-3])[:.]([0-5]\d)(?:[:.][0-5]\d)?$/;
   const hour24Match = trimmed.match(hour24Regex);
 
   if (hour24Match) {

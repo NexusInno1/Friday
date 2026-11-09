@@ -63,6 +63,23 @@ describe("cleanJsonText", () => {
       facts: [{ content: "Works remotely", importance: 4, tags: ["work"] }],
     });
   });
+
+  it("does not over-span when trailing commentary contains bracketed references", () => {
+    const raw = "Here are facts:\n[{\"content\": \"Enjoys swimming\", \"importance\": 3, \"tags\": [\"fitness\"]}]\nNote: See citation [ref 1] and appendix [app 2] for details.";
+    const cleaned = cleanJsonText(raw);
+    expect(cleaned).toBe("[{\"content\": \"Enjoys swimming\", \"importance\": 3, \"tags\": [\"fitness\"]}]");
+    expect(JSON.parse(cleaned)).toEqual([
+      { content: "Enjoys swimming", importance: 3, tags: ["fitness"] },
+    ]);
+  });
+
+  it("handles strings containing brackets and escaped quotes inside JSON payload", () => {
+    const raw = "Output:\n[{\"content\": \"Prefers [bracketed] tags and said \\\"hello\\\"\", \"importance\": 4, \"tags\": [\"note\"]}]\nReference [3]";
+    const cleaned = cleanJsonText(raw);
+    expect(JSON.parse(cleaned)).toEqual([
+      { content: "Prefers [bracketed] tags and said \"hello\"", importance: 4, tags: ["note"] },
+    ]);
+  });
 });
 
 describe("FactItemSchema and FactExtractionResponseSchema", () => {
