@@ -10,7 +10,13 @@ export async function handleReminders(ctx: Context): Promise<void> {
     const reminders = await listActiveReminders(TELEGRAM_ALLOWED_USER_ID, 25);
 
     if (reminders.length === 0) {
-      await ctx.reply("📋 **No active reminders.** All caught up, Boss!");
+      await ctx
+        .reply("📋 **No active reminders.** All caught up, Boss!", {
+          parse_mode: "Markdown",
+        })
+        .catch(async () => {
+          await ctx.reply("📋 No active reminders. All caught up, Boss!");
+        });
       return;
     }
 

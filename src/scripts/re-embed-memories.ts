@@ -1,7 +1,7 @@
 import fs from "fs";
 import { getDataStore } from "../db/datastore-provider.js";
 import type { DataStore } from "../db/datastore.js";
-import { generateEmbedding } from "../actions/actions.js";
+import { generateEmbedding, EMBEDDING_MODEL } from "../actions/actions.js";
 import { env } from "../config/env.js";
 
 export interface ReembedOptions {
@@ -13,6 +13,7 @@ export interface ReembedOptions {
   stateFilePath?: string;
   initialCompletedIds?: Set<string>;
   embeddingGenerator?: (text: string) => Promise<number[]>;
+  targetModel?: string;
 }
 
 export interface ReembedResult {
@@ -47,6 +48,7 @@ export async function reembedAllMemories(options: ReembedOptions = {}): Promise<
   const retryDelayMs = options.retryDelayMs ?? 1000;
   const stateFilePath = options.stateFilePath ?? ".reembed-migration-state.json";
   const embedder = options.embeddingGenerator ?? generateEmbedding;
+  const targetModel = options.targetModel ?? EMBEDDING_MODEL;
 
   printBackupReminder();
 
@@ -55,7 +57,11 @@ export async function reembedAllMemories(options: ReembedOptions = {}): Promise<
   if (stateFilePath !== ":memory:" && fs.existsSync(stateFilePath)) {
     try {
       const data = JSON.parse(fs.readFileSync(stateFilePath, "utf-8"));
-      if (Array.isArray(data.completedIds)) {
+      if (data.targetModel && data.targetModel !== targetModel) {
+        console.log(
+          `[migration] State file model (${data.targetModel}) differs from target model (${targetModel}). Starting fresh.`
+        );
+      } else if (Array.isArray(data.completedIds)) {
         for (const id of data.completedIds) {
           completedIds.add(id);
         }
@@ -126,12 +132,30 @@ export async function reembedAllMemories(options: ReembedOptions = {}): Promise<
       try {
         fs.writeFileSync(
           stateFilePath,
-          JSON.stringify({ completedIds: Array.from(completedIds), updatedAt: new Date().toISOString() }, null, 2),
+          JSON.stringify(
+            {
+              targetModel,
+              completedIds: Array.from(completedIds),
+              updatedAt: new Date().toISOString(),
+            },
+            null,
+            2
+          ),
           "utf-8"
         );
       } catch (err) {
         console.warn("[migration] Failed to save state file:", err);
       }
+    }
+  }
+
+  // If migration completed 100% without failures, clean up state file so future migrations are not blocked
+  if (result.failed === 0 && stateFilePath !== ":memory:" && fs.existsSync(stateFilePath)) {
+    try {
+      fs.unlinkSync(stateFilePath);
+      console.log(`[migration] Migration completed 100%. Removed state file: ${stateFilePath}`);
+    } catch (err) {
+      console.warn("[migration] Failed to remove completed state file:", err);
     }
   }
 

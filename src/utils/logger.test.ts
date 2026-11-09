@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { logger } from "./logger.js";
+import { env, setEnv } from "../config/env.js";
 
 describe("logger", () => {
   let logSpy: any;
@@ -45,5 +46,20 @@ describe("logger", () => {
     const logged = JSON.parse(errorSpy.mock.calls[0][0]);
     expect(logged.level).toBe("error");
     expect(logged.event).toBe("all_models_down");
+  });
+
+  it("automatically redacts configured API keys and secrets from logged data", () => {
+    const realSecret = "ai_live_token_secret_998877";
+    setEnv({
+      ...env(),
+      GEMINI_API_KEY: realSecret,
+    });
+
+    logger.info("tool_call", { args: { query: `test ${realSecret}` } });
+    expect(logSpy).toHaveBeenCalledTimes(1);
+
+    const logged = JSON.parse(logSpy.mock.calls[0][0]);
+    expect(logged.args.query).not.toContain(realSecret);
+    expect(logged.args.query).toContain("[REDACTED]");
   });
 });

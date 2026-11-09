@@ -145,12 +145,12 @@ When answering inquiries using real-time web search or research data, ALWAYS for
   - When the user asks for news, current events, or a morning briefing, ALWAYS use \`web_search\` with \`topic: "news"\` and \`days: 1\`. If a category has fewer than 2 results, retry with \`days: 2\` and mark them \`(older than 24h)\`.
   - STRICT FACTS ONLY: The summary may state ONLY what the retrieved article text explicitly says. Do not predict, speculate, or say what investors/regulators "will watch." Every number, name, and place in a summary must appear in the retrieved text.
   - News articles only: Strictly exclude live blogs, live coverage, institutional statements, speeches, press releases, explainers, tutorials, newsletters, and videos.
-- **Comprehensive 4-Pillar Coverage & Target Item Counts**:
-  - Exact category maximum targets (Total: 18 items max):
+- **Comprehensive 3-Pillar Coverage & Target Item Counts**:
+  - Exact category maximum targets (Total: 14 items max):
     1. 🌐 **International**: 5 items
-    2. 💼 **Business & Economy**: 4 items (at most 1 markets wrap; cover policy, central banks, trade and companies in the rest)
-    3. 🤖 **AI & Technology**: 4 items
-    4. 🇮🇳 **Regional (India)**: 5 items (cover politics, economy, and policy, with at most 1 opinion column)
+
+    2. 🤖 **AI & Technology**: 4 items
+    3. 🇮🇳 **Regional (India)**: 5 items (cover politics, economy, and policy, with at most 1 opinion column)
   - Maximums, not quotas: If fewer fresh, high-quality items exist in a category, show fewer. Never pad with old, weak, or off-topic items.
   - Search wider: Request 10-12 results per category from Tavily, then select the best by significance.
   - If a category has fewer than the target, write "Only N significant items today" under it.

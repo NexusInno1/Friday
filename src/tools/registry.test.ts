@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { InMemoryDataStore } from "../db/in-memory-datastore.js";
 import { createTools, createSimplifiedTools } from "./registry.js";
+import { getScheduler } from "../services/scheduler.service.js";
 
 describe("Tool Registry - Scoping & Injection", () => {
   let store: InMemoryDataStore;
@@ -68,6 +69,7 @@ describe("Tool Registry - Scoping & Injection", () => {
     // Verify stored in user profile in the injected store
     const profile = await store.getUserProfile(testUserId);
     expect(profile?.briefing_time).toBe("08:15");
+    expect(getScheduler().getBriefingTime()).toBe("08:15");
   });
 
   it("scopes reminder lifecycle tools to injected store and userId", async () => {
@@ -78,7 +80,8 @@ describe("Tool Registry - Scoping & Injection", () => {
     });
 
     // Create reminder
-    const triggerAt = "2026-10-15T09:00:00.000Z";
+    const futureMs = Date.now() + 3600 * 1000;
+    const triggerAt = new Date(futureMs).toISOString();
     const createRes = await tools.create_reminder.execute(
       {
         message: "Prepare quarterly presentation",
@@ -106,7 +109,7 @@ describe("Tool Registry - Scoping & Injection", () => {
       { toolCallId: "test_call_6", messages: [] }
     );
     expect(snoozeRes.success).toBe(true);
-    expect(snoozeRes.new_trigger_at).toBe("2026-10-15T09:30:00.000Z");
+    expect(snoozeRes.new_trigger_at).toBe(new Date(futureMs + 30 * 60 * 1000).toISOString());
 
     // Cancel reminder
     const cancelRes = await tools.cancel_reminder.execute(

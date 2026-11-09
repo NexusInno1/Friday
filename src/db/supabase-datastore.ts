@@ -11,6 +11,7 @@ import type {
 } from "./schema.js";
 import type { DataStore } from "./datastore.js";
 import { getSupabaseClient } from "./supabase.js";
+import { escapeSqlWildcards } from "../utils/sanitize.js";
 
 export class SupabaseDataStore implements DataStore {
   private db: SupabaseClient<Database>;
@@ -202,9 +203,7 @@ export class SupabaseDataStore implements DataStore {
       console.warn("[supabase-store] Error archiving active conversation on clear:", error.message);
     }
 
-    if (userId) {
-      await this.logActivity(userId, "conversation_cleared", { chat_id: chatId });
-    }
+    await this.logActivity(userId ?? null, "conversation_cleared", { chat_id: chatId });
   }
 
   // ─── Sessions & History Search ─────────────────────────
@@ -227,16 +226,17 @@ export class SupabaseDataStore implements DataStore {
     const countMap = new Map<string, number>();
 
     if (convIds.length > 0) {
-      const { data: messages } = await this.db
-        .from("messages")
-        .select("conversation_id")
-        .in("conversation_id", convIds);
-
-      if (messages) {
-        for (const m of messages) {
-          countMap.set(m.conversation_id, (countMap.get(m.conversation_id) ?? 0) + 1);
-        }
-      }
+      await Promise.all(
+        convs.map(async (c) => {
+          const { count, error: countErr } = await this.db
+            .from("messages")
+            .select("id", { count: "exact", head: true })
+            .eq("conversation_id", c.id);
+          if (!countErr && count !== null) {
+            countMap.set(c.id, count);
+          }
+        })
+      );
     }
 
     return convs.map((c) => ({
@@ -434,11 +434,12 @@ export class SupabaseDataStore implements DataStore {
       convIds.push(c.id);
     }
 
+    const escapedQuery = escapeSqlWildcards(trimmed);
     const { data: messages, error: msgErr } = await this.db
       .from("messages")
       .select("id, conversation_id, role, content, created_at")
       .in("conversation_id", convIds)
-      .ilike("content", `%${trimmed}%`)
+      .ilike("content", `%${escapedQuery}%`)
       .order("created_at", { ascending: false })
       .limit(limit);
 
@@ -617,12 +618,13 @@ export class SupabaseDataStore implements DataStore {
     query: string,
     limit: number
   ): Promise<Memory[]> {
+    const escapedQuery = escapeSqlWildcards(query);
     const { data, error } = await this.db
       .from("memories")
       .select()
       .eq("user_id", userId)
       .eq("is_active", true)
-      .ilike("content", `%${query}%`)
+      .ilike("content", `%${escapedQuery}%`)
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(limit);

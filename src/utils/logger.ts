@@ -1,3 +1,5 @@
+import { redactSecrets } from "./sanitize.js";
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface LogRecord {
@@ -15,7 +17,7 @@ export const logger = {
       event,
       ...data,
     };
-    const jsonStr = JSON.stringify(record);
+    const jsonStr = redactSecrets(JSON.stringify(record));
     if (level === "error") {
       console.error(jsonStr);
     } else if (level === "warn") {

@@ -440,9 +440,27 @@ describe("AssistantEngine", () => {
     };
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ answer: "AI news results", results: [] }),
+    globalThis.fetch = vi.fn().mockImplementation(async (input: any) => {
+      const urlStr =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+          ? input.href
+          : (input && typeof input === "object" && "url" in input)
+          ? String(input.url)
+          : String(input);
+      if (urlStr.includes("tavily.com")) {
+        return {
+          ok: true,
+          json: async () => ({ answer: "AI news results", results: [] }),
+        } as any;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          embedding: { values: new Array(768).fill(0.01) },
+        }),
+      } as any;
     });
 
     let step = 0;
