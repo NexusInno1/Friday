@@ -77,7 +77,7 @@ describe("Briefing Service - Quality & Sourcing Enhancements", () => {
       expect(summary).not.toContain("[");
       expect(summary).not.toContain("]");
       expect(summary).not.toContain("*");
-      expect(summary).toContain("Economic ... Beto O'Rourke");
+      expect(summary).toContain("Beto O'Rourke met with officials");
     });
 
     it("limits summary to max 25 words", () => {
@@ -86,6 +86,28 @@ describe("Briefing Service - Quality & Sourcing Enhancements", () => {
       const summary = buildWhyItMatters(rawContent);
       const words = summary.replace(/\.\.\.$/, "").split(/\s+/);
       expect(words.length).toBeLessThanOrEqual(25);
+    });
+
+    it("strips leading markdown headers, list bullets, and blockquotes", () => {
+      expect(buildWhyItMatters("# Headline here. Key insight details.")).not.toMatch(/^#/);
+      expect(buildWhyItMatters("> The constitutionality of the Compact. More details here.")).not.toMatch(/^>/);
+      expect(buildWhyItMatters("- NPT member. On nuclear cooperation, Iran agreed.")).not.toMatch(/^-/);
+    });
+
+    it("skips duplicate headline sentences in summary to extract true insight", () => {
+      const headline = "Gold climbs more than 1% as inflation fears ease";
+      const rawContent =
+        "# Gold climbs more than 1% as inflation fears ease on lower crude prices. Spot gold advanced to two-week highs following easing energy tensions.";
+      const summary = buildWhyItMatters(rawContent, headline);
+      expect(summary).not.toContain("Gold climbs more than 1%");
+      expect(summary).toContain("Spot gold advanced to two-week highs");
+    });
+
+    it("skips meaningless numeric or micro-fragments like '2.'", () => {
+      const rawContent = "2. European equities traded flat as automotive indices slipped.";
+      const summary = buildWhyItMatters(rawContent);
+      expect(summary).not.toBe("2.");
+      expect(summary).toContain("European equities traded flat");
     });
   });
 
@@ -160,6 +182,40 @@ describe("Briefing Service - Quality & Sourcing Enhancements", () => {
       expect(result).toMatch(/\n  Why it matters: Both nations agreed/);
       // Ensure 'Why it matters:' is NOT on the same line as the timestamp
       expect(result).not.toMatch(/IST[ \t]+Why it matters:/);
+    });
+
+    it("does not falsely tag articles from today as '(older than 24h)' during fallback query", async () => {
+      let callCount = 0;
+      const recentDate = new Date(Date.now() - 4 * 3600 * 1000).toISOString(); // 4 hours ago
+
+      globalThis.fetch = vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          // Initial query returns 0 results to force fallback
+          return { ok: true, json: async () => ({ results: [] }) };
+        }
+        // Fallback query returns a story published 4 hours ago
+        return {
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                title: "Anthropic releases Claude 3.5 Haiku enterprise model - TechCrunch",
+                url: "https://techcrunch.com/anthropic-haiku",
+                published_date: recentDate,
+                content: "Anthropic released the updated model targeting fast enterprise workloads.",
+                score: 0.9,
+              },
+            ],
+          }),
+        };
+      });
+
+      const category = BRIEFING_CATEGORIES.find((c) => c.category === "AI & Technology")!;
+      const result = await fetchCategoryNews("test_key", category);
+
+      expect(result).toContain("Anthropic releases Claude 3.5 Haiku enterprise model - TechCrunch");
+      expect(result).not.toContain("(older than 24h)");
     });
   });
 });

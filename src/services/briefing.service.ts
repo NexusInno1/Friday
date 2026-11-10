@@ -124,6 +124,14 @@ export const KNOWN_OUTLET_NAMES: Record<string, string> = {
   "technologyreview.com": "MIT Tech Review",
   "venturebeat.com": "VentureBeat",
   "arstechnica.com": "Ars Technica",
+  "aa.com.tr": "Anadolu Agency",
+  "csis.org": "CSIS",
+  "atlanticcouncil.org": "Atlantic Council",
+  "irangov.ir": "Iran Government",
+  "gizmodo.com": "Gizmodo",
+  "latimes.com": "Los Angeles Times",
+  "kitco.com": "Kitco",
+  "finance.yahoo.com": "Yahoo Finance",
 };
 
 /** Verify whether an item's published date is within the allowed recency window. */
@@ -267,10 +275,13 @@ export function extractSourceAndCleanHeadline(
   return { headline: clean, source };
 }
 
-export function buildWhyItMatters(content?: string): string {
+export function buildWhyItMatters(content?: string, headline?: string): string {
   if (!content || !content.trim()) return "";
   let text = content.replace(/[\r\n]+/g, " ").trim();
   text = text.replace(/^(published on|updated on|by|photo:).*?[:–-]\s*/i, "");
+
+  // Strip leading markdown headers (#, ##, ###), blockquotes (>), or list bullets (-, *, •)
+  text = text.replace(/^[#>*•\-–—\s\d.]+/g, "").trim();
 
   // Strip tag clouds (e.g. "Transformation,11,Diplomacy,15,Diplomatic Row,6...")
   text = text.replace(/(?:[A-Za-z0-9\s&/'-]+,\s*\d+,\s*){2,}[A-Za-z0-9\s&/'-]+,\s*\d+/g, "");
@@ -290,18 +301,47 @@ export function buildWhyItMatters(content?: string): string {
   text = text.replace(/\[\s*(?:\.{3}|…)\s*\]/g, "...");
 
   // Strip remaining markdown formatting characters that can break Telegram entity parsing
-  text = text.replace(/[[\]*`_~]/g, "");
+  text = text.replace(/[[\]*`_~#]/g, "");
 
   text = text.replace(/\s+/g, " ").trim();
   if (!text) return "";
 
-  const sentenceMatch = text.match(/^(.+?(?:(?<!\.)[.?!](?!\.)(?=\s+[A-Z0-9]|$)))/);
-  let firstSentence = sentenceMatch ? sentenceMatch[1].trim() : text;
-  const words = firstSentence.split(/\s+/);
+  // Split into candidate sentences
+  const rawSentences = text
+    .split(/(?<=[.?!])\s+(?=[A-Z0-9])/g)
+    .map((s) => s.replace(/^[#>*•\-–—\s\d.]+/g, "").trim())
+    .filter((s) => s.length > 0);
+
+  let bestSentence = "";
+  for (const s of rawSentences) {
+    const cleanS = s.replace(/^[#>*•\-–—\s\d.]+/g, "").trim();
+    const words = cleanS.split(/\s+/).filter(Boolean);
+    // Ignore fragments like "2." or "- NPT member"
+    if (words.length < 4) continue;
+
+    // Ignore sentence if it merely repeats the headline
+    if (headline && areHeadlinesSimilar(headline, cleanS)) {
+      continue;
+    }
+
+    bestSentence = cleanS;
+    break;
+  }
+
+  if (!bestSentence && rawSentences.length > 0) {
+    const first = rawSentences[0].replace(/^[#>*•\-–—\s\d.]+/g, "").trim();
+    if (first.split(/\s+/).filter(Boolean).length >= 4) {
+      bestSentence = first;
+    }
+  }
+
+  if (!bestSentence) return "";
+
+  const words = bestSentence.split(/\s+/).filter(Boolean);
   if (words.length > 25) {
     return words.slice(0, 25).join(" ") + "...";
   }
-  return firstSentence;
+  return bestSentence;
 }
 
 export function isAnalysisStory(title: string, content?: string): boolean {
@@ -496,9 +536,10 @@ export async function fetchCategoryNews(
 
       seenHeadlines.push(headline);
 
-      const whyItMatters = buildWhyItMatters(r.content);
+      const whyItMatters = buildWhyItMatters(r.content, headline);
       const { isAnalysis, label: analysisLabel } = extractAnalysisAndAuthor(r.title, r.content);
       const { formatted: istFormatted, isOlderThan24h } = formatToIST(r.published_date);
+      const articleIsOlder = r.published_date ? isOlderThan24h : markOlder;
 
       valid.push({
         headline,
@@ -506,7 +547,7 @@ export async function fetchCategoryNews(
         url: r.url,
         publishedDate: r.published_date,
         istFormatted,
-        isOlderThan24h: markOlder || isOlderThan24h,
+        isOlderThan24h: articleIsOlder,
         whyItMatters,
         isAnalysis,
         analysisLabel,
